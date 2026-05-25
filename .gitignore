@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.db
+*.db-wal
+*.db-shm
+dist/
+tmp/
+.DS_Store
+.idea/
+graphify-out/
+.claude/
