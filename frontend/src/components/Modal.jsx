@@ -1,17 +1,12 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Modal({ open, onClose, size = 'md', children }) {
   useEffect(() => {
-    const appRoot = document.getElementById('root')?.firstElementChild;
-    if (!appRoot) return;
-    if (open) {
-      appRoot.style.filter = 'blur(2px)';
-      appRoot.style.transition = 'filter 0.2s ease';
-    } else {
-      appRoot.style.filter = '';
-    }
-    return () => { appRoot.style.filter = ''; };
+    if (!open) return;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
   }, [open]);
 
   useEffect(() => {
@@ -23,16 +18,39 @@ export default function Modal({ open, onClose, size = 'md', children }) {
     return () => document.removeEventListener('keydown', handleKey);
   }, [open, onClose]);
 
-  if (!open) return null;
-
   const maxWidth = size === 'lg' ? 'max-w-2xl' : size === 'sm' ? 'max-w-sm' : 'max-w-lg';
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-24 p-4" onClick={onClose}>
-      <div className={`card p-6 ${maxWidth} w-full max-h-[75vh] overflow-y-auto animate-scale-in relative shadow-2xl`} onClick={e => e.stopPropagation()}>
-        {children}
-      </div>
-    </div>,
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-[60] flex items-start justify-center pt-[12vh] p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          onClick={onClose}
+          style={{ background: 'var(--modal-overlay)', backdropFilter: 'blur(4px)' }}
+        >
+          <motion.div
+            className={`${maxWidth} w-full max-h-[75vh] overflow-y-auto relative shadow-2xl`}
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.97, y: 10 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'var(--modal-bg)',
+              border: '1px solid var(--border)',
+              borderRadius: '16px',
+              padding: '1.5rem',
+            }}
+          >
+            {children}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
     document.body
   );
 }
