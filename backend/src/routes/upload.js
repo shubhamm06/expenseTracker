@@ -5,7 +5,7 @@ import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { execFileSync } from 'child_process';
 import { supabase } from '../models/supabase.js';
-import { parsePdf, extractTransactionsFromText, extractSourceFromText } from '../services/pdfParser.js';
+import { parsePdf, extractTransactionsFromText, extractSourceFromText, extractDueDateFromText } from '../services/pdfParser.js';
 
 const router = Router();
 
@@ -394,12 +394,15 @@ async function handlePdfPreview(req, res, fileId) {
     const { text } = await parsePdf(req.file.path, password);
     const detectedSource = extractSourceFromText(text);
     const transactions = extractTransactionsFromText(text, detectedSource);
+    const dueDate = extractDueDateFromText(text);
 
-    if (detectedSource && fileId) {
-      await supabase
-        .from('uploaded_files')
-        .update({ detected_source: detectedSource })
-        .eq('id', fileId);
+    if (fileId) {
+      const updates = {};
+      if (detectedSource) updates.detected_source = detectedSource;
+      if (dueDate) updates.due_date = dueDate;
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('uploaded_files').update(updates).eq('id', fileId);
+      }
     }
 
     if (transactions.length === 0) {
@@ -411,6 +414,7 @@ async function handlePdfPreview(req, res, fileId) {
         file_path: req.file.path,
         file_id: fileId,
         detected_source: detectedSource,
+        due_date: dueDate,
         message: 'Could not auto-detect transactions. You may need to review the extracted text.',
       });
     }
@@ -424,6 +428,7 @@ async function handlePdfPreview(req, res, fileId) {
       file_id: fileId,
       all_transactions: transactions,
       detected_source: detectedSource,
+      due_date: dueDate,
     });
   } catch (err) {
     if (err.message === 'PASSWORD_REQUIRED') {
@@ -449,9 +454,14 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
     const { text } = await parsePdf(filePath, password);
     const detectedSource = extractSourceFromText(text);
     const transactions = extractTransactionsFromText(text, detectedSource);
+    const dueDate = extractDueDateFromText(text);
 
     if (fileId) {
       storeDecryptedPdf(fileId, filePath, password);
+      if (dueDate) {
+        const db = getDb();
+        db.prepare('UPDATE uploaded_files SET due_date = ? WHERE id = ?').run(dueDate, fileId);
+      }
     }
 
     if (transactions.length === 0) {
@@ -462,6 +472,7 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
         total_rows: 0,
         file_path: filePath,
         detected_source: detectedSource,
+        due_date: dueDate,
         message: 'Could not auto-detect transactions from this PDF.',
       });
     }
@@ -474,6 +485,7 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
       file_path: filePath,
       all_transactions: transactions,
       detected_source: detectedSource,
+      due_date: dueDate,
     });
   } catch (err) {
     if (err.message === 'INVALID_PASSWORD') {

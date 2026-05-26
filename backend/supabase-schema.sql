@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
   detected_source TEXT,
   pending_transactions TEXT,
   skipped_transactions TEXT,
+  due_date DATE,
   uploaded_at TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
 );
 

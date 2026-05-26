@@ -39,6 +39,31 @@ router.get('/', async (req, res) => {
   res.json(transactions);
 });
 
+router.get('/due-dates', async (req, res) => {
+  const { month, year } = req.query;
+  if (!month || !year) return res.json({});
+
+  const startDate = `${year}-${month.padStart(2, '0')}-01`;
+  const endDate = `${year}-${month.padStart(2, '0')}-31`;
+
+  const { data: rows } = await supabase
+    .from('uploaded_files')
+    .select('detected_source, due_date')
+    .not('due_date', 'is', null)
+    .not('detected_source', 'is', null)
+    .gte('due_date', startDate)
+    .lte('due_date', endDate)
+    .order('uploaded_at', { ascending: false });
+
+  const dueDates = {};
+  for (const row of rows || []) {
+    if (!dueDates[row.detected_source]) {
+      dueDates[row.detected_source] = row.due_date;
+    }
+  }
+  res.json(dueDates);
+});
+
 router.get('/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('transactions')

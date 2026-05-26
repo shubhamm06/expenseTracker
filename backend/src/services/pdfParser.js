@@ -435,9 +435,6 @@ function extractIciciTransactions(text) {
   const lines = text.split('\n');
   const transactions = [];
 
-  // ICICI format: "DD/MM/YYYY<serial><description>" on one line
-  // Amount on next lines, prefixed by reward points (e.g., "2404,803.00" = 240 pts + 4,803.00)
-  // The actual amount is the last valid currency pattern: digits with comma thousands + .XX
   const txnLinePattern = /^(\d{2}\/\d{2}\/\d{4})(\d{8,15})(.+)/;
 
   for (let i = 0; i < lines.length; i++) {
@@ -449,16 +446,11 @@ function extractIciciTransactions(text) {
     let description = match[3].trim();
     let amount = null;
 
-    // Look at next lines for the amount
     for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
       const nextLine = lines[j].trim();
       if (!nextLine) continue;
       if (/^[A-Z]{2}$/.test(nextLine)) continue;
       if (/^#$/.test(nextLine)) break;
-
-      // Extract the actual amount: last occurrence of comma-separated number with .XX
-      // "2404,803.00" -> we want "4,803.00"; "9197.08" -> we want "197.08" or "9,197.08"
-      // Rule: amount format is [digits,]digits.digits — find the rightmost valid amount
       amount = extractIciciAmount(nextLine);
       break;
     }
@@ -468,7 +460,6 @@ function extractIciciTransactions(text) {
     const parsedAmount = parseFloat(amount.replace(/,/g, ''));
     if (parsedAmount < 1.0) continue;
 
-    // Clean description - remove trailing country codes
     description = description.replace(/\s+(IN|US|SG|GB|AE|HK|AU|JP|NL|DE|FR)\s*$/i, '').trim();
     description = description.replace(/\s+/g, ' ');
     if (description.length < 2) continue;
@@ -487,30 +478,16 @@ function extractIciciTransactions(text) {
 }
 
 function extractIciciAmount(str) {
-  // ICICI concatenates reward points (integer) + amount on one line
-  // e.g., "2404,803.00" = reward pts "240" + amount "4,803.00"
-  // e.g., "9197.08" = reward pts "9" + amount "197.08"
-  // Key insight: the amount always has .XX at the end, and Indian comma format
-  // means the portion before decimal has groups: NNN or N,NNN or NN,NNN or N,NN,NNN etc.
-  // Strategy: find the .XX, then walk left to find valid amount start
   const trimmed = str.trim();
   const dotIdx = trimmed.lastIndexOf('.');
   if (dotIdx === -1) return null;
   const decimals = trimmed.substring(dotIdx + 1);
   if (decimals.length !== 2 || !/^\d{2}$/.test(decimals)) return null;
 
-  // Walk left from dot to find the amount start
-  // Valid amount chars before dot: digits and commas
-  // The first group (rightmost) before dot is always 3 digits
-  // Then subsequent groups are 2 digits each (Indian format)
   const beforeDot = trimmed.substring(0, dotIdx);
-  let amountStart = beforeDot.length;
-
-  // Must end with 3 digits
   if (beforeDot.length < 1) return null;
 
   let pos = beforeDot.length - 1;
-  // Collect rightmost 3 digits (or 1-3 if that's all there is)
   let digitCount = 0;
   while (pos >= 0 && /\d/.test(beforeDot[pos])) {
     digitCount++;
@@ -519,10 +496,8 @@ function extractIciciAmount(str) {
   }
   if (digitCount === 0) return null;
 
-  // Now check for comma-separated groups of 2
   while (pos >= 0 && beforeDot[pos] === ',') {
     pos--;
-    // Expect exactly 2 digits
     let groupDigits = 0;
     while (pos >= 0 && /\d/.test(beforeDot[pos])) {
       groupDigits++;
@@ -530,14 +505,85 @@ function extractIciciAmount(str) {
       if (groupDigits === 2) break;
     }
     if (groupDigits !== 2) {
-      // Invalid group, stop here
-      pos += groupDigits + 1; // back up past the comma
+      pos += groupDigits + 1;
       break;
     }
   }
 
-  amountStart = pos + 1;
+  const amountStart = pos + 1;
   const amount = trimmed.substring(amountStart, dotIdx + 3);
   if (!amount || !/^\d/.test(amount)) return null;
   return amount;
+}
+
+
+export function extractDueDateFromText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const fullText = lines.join(' ');
+
+  const months = {
+    jan: '01', january: '01', feb: '02', february: '02', mar: '03', march: '03',
+    apr: '04', april: '04', may: '05', jun: '06', june: '06',
+    jul: '07', july: '07', aug: '08', august: '08', sep: '09', september: '09',
+    oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
+  };
+
+  const dueDatePatterns = [
+    /(?:payment\s*)?due\s*date\s*[:\-]?\s*(\d{1,2})[\/\-\s](\d{2}|\w{3,9})[\/\-\s](\d{4})/i,
+    /(?:total\s*)?(?:amount\s*)?due\s*(?:by|on|before)\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
+    /pay\s*(?:by|before|on)\s*(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/i,
+    /last\s*date\s*(?:for|of)\s*payment\s*[:\-]?\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
+    /payment\s*due\s*[:\-]?\s*(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/i,
+    /due\s*on\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
+    /due\s*date[\s\S]{0,30}?(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/i,
+  ];
+
+  for (const pattern of dueDatePatterns) {
+    const match = fullText.match(pattern);
+    if (match) {
+      const day = match[1].padStart(2, '0');
+      let month = match[2];
+      const year = match[3];
+
+      if (/^\d+$/.test(month)) {
+        month = month.padStart(2, '0');
+      } else {
+        month = months[month.toLowerCase()] || null;
+        if (!month) continue;
+      }
+
+      const numMonth = parseInt(month, 10);
+      const numDay = parseInt(day, 10);
+      if (numMonth < 1 || numMonth > 12 || numDay < 1 || numDay > 31) continue;
+
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    if (/due\s*date/i.test(lines[i])) {
+      const nearby = lines.slice(i, Math.min(i + 3, lines.length)).join(' ');
+      const dateMatch = nearby.match(/(\d{1,2})[\/\-\s]((?:\d{2}|\w{3,9}))[\/\-\s](\d{4})/);
+      if (dateMatch) {
+        const day = dateMatch[1].padStart(2, '0');
+        let month = dateMatch[2];
+        const year = dateMatch[3];
+
+        if (/^\d+$/.test(month)) {
+          month = month.padStart(2, '0');
+        } else {
+          month = months[month.toLowerCase()] || null;
+          if (!month) continue;
+        }
+
+        const numMonth = parseInt(month, 10);
+        const numDay = parseInt(day, 10);
+        if (numMonth < 1 || numMonth > 12 || numDay < 1 || numDay > 31) continue;
+
+        return `${year}-${month}-${day}`;
+      }
+    }
+  }
+
+  return null;
 }

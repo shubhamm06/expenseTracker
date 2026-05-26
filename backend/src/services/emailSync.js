@@ -6,7 +6,7 @@ import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { supabase } from '../models/supabase.js';
-import { parsePdf, extractTransactionsFromText, extractSourceFromText } from './pdfParser.js';
+import { parsePdf, extractTransactionsFromText, extractSourceFromText, extractDueDateFromText } from './pdfParser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMP_DIR = join(__dirname, '../../tmp/email-attachments');
@@ -435,6 +435,8 @@ async function processAttachment(attachment, passwords, jobId) {
       }
     }
 
+    const dueDate = extractDueDateFromText(text);
+
     // Upload to Supabase Storage
     const storagePath = `uploads/email/${Date.now()}-${attachment.filename}`;
     await supabase.storage
@@ -450,6 +452,7 @@ async function processAttachment(attachment, passwords, jobId) {
       source_type: 'email',
       detected_source: detectedSource || null,
       pending_transactions: JSON.stringify(valid),
+      due_date: dueDate || null,
     });
 
     await supabase.from('email_sync_results').insert({
