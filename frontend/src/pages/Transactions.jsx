@@ -4,15 +4,15 @@ import Modal from '../components/Modal';
 export default function Transactions() {
   const [transactions, setTransactions] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshResult, setRefreshResult] = useState(null);
-  const [editingTransaction, setEditingTransaction] = useState(null);
+    const [editingTransaction, setEditingTransaction] = useState(null);
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [collapsedSources, setCollapsedSources] = useState(new Set());
   const [confirmModal, setConfirmModal] = useState(null);
   const [renamingSource, setRenamingSource] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [addingSource, setAddingSource] = useState(null);
+  const [syncSchedule, setSyncSchedule] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('all');
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
@@ -20,6 +20,7 @@ export default function Transactions() {
 
   useEffect(() => {
     fetch('/api/categories').then(r => r.json()).then(setCategories);
+    fetch('/api/settings/sync-schedule').then(r => r.json()).then(setSyncSchedule);
   }, []);
 
   function loadTransactions() {
@@ -34,18 +35,7 @@ export default function Transactions() {
     loadTransactions();
   }, [filters]);
 
-  async function refreshCategories() {
-    setRefreshing(true);
-    try {
-      const res = await fetch('/api/rules/apply', { method: 'POST' });
-      const data = await res.json();
-      setRefreshResult(data);
-      loadTransactions();
-      setTimeout(() => setRefreshResult(null), 4000);
-    } finally {
-      setRefreshing(false);
-    }
-  }
+
 
   function updateCategory(id, categoryId) {
     fetch(`/api/transactions/${id}/category`, {
@@ -91,8 +81,9 @@ export default function Transactions() {
     setEditingTransaction(null);
   }
 
-  const totalDebit = transactions.filter(t => t.type !== 'credit' && !t.is_reimbursable).reduce((s, t) => s + t.amount, 0);
-  const totalCredit = transactions.filter(t => t.type === 'credit' && !t.is_reimbursable).reduce((s, t) => s + t.amount, 0);
+  const isExcluded = t => t.is_reimbursable || t.category_name === 'Payments';
+  const totalDebit = transactions.filter(t => t.type !== 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
+  const totalCredit = transactions.filter(t => t.type === 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
   const netAmount = totalDebit - totalCredit;
   const reimbursableCount = transactions.filter(t => t.is_reimbursable).length;
 
@@ -212,18 +203,6 @@ export default function Transactions() {
           <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>{monthLabel}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={refreshCategories}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium shadow-xs focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all disabled:opacity-50"
-            style={{ background: 'var(--accent-soft)', border: '1px solid var(--border)', color: 'var(--accent)' }}
-            title="Apply categorization rules to all uncategorized transactions across all months"
-          >
-            <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.992 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-            </svg>
-            {refreshing ? 'Applying...' : 'Auto-categorize'}
-          </button>
           <select
             value={filters.month}
             onChange={e => setFilters(f => ({ ...f, month: Number(e.target.value) }))}
@@ -247,21 +226,25 @@ export default function Transactions() {
               return <option key={y} value={y}>{y}</option>;
             })}
           </select>
+          <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+            {['all', 'debit', 'credit'].map(type => (
+              <button
+                key={type}
+                onClick={() => setTypeFilter(type)}
+                className="px-2.5 py-1.5 text-xs font-medium transition-all"
+                style={{
+                  background: typeFilter === type ? 'var(--accent)' : 'var(--card)',
+                  color: typeFilter === type ? '#fff' : 'var(--text-muted)',
+                }}
+              >
+                {type === 'all' ? 'All' : type === 'debit' ? 'Debit' : 'Credit'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Refresh Result Toast */}
-      {refreshResult && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg animate-scale-in"
-          style={{ background: 'var(--success-soft)', border: '1px solid var(--border)' }}>
-          <svg className="w-4 h-4 shrink-0" style={{ color: 'var(--success)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-          </svg>
-          <p className="text-sm font-medium" style={{ color: 'var(--success)' }}>
-            Applied rules to {refreshResult.applied} transaction{refreshResult.applied !== 1 ? 's' : ''} across all months
-          </p>
-        </div>
-      )}
+
 
       {/* Overall Stats Bar */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -274,10 +257,50 @@ export default function Transactions() {
         )}
       </div>
 
+      {/* Statement Sync Schedule */}
+      {syncSchedule && syncSchedule.statement_sync.enabled && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+          <svg className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--purple)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            <span className="font-semibold" style={{ color: 'var(--purple)' }}>Statement auto-sync</span>{' — '}
+            {syncSchedule.statement_sync.schedule}, next at{' '}
+            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {new Date(syncSchedule.statement_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
+            </span>
+          </span>
+        </div>
+      )}
+
       {/* Source Toggles */}
       {sourceNames.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Sources:</span>
+          <button
+            onClick={() => setSelectedSources(new Set(sourceNames))}
+            className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium transition-all"
+            style={{
+              background: selectedSources.size === sourceNames.length ? 'var(--accent-soft)' : 'var(--surface)',
+              color: selectedSources.size === sourceNames.length ? 'var(--accent)' : 'var(--text-muted)',
+              border: `1px solid ${selectedSources.size === sourceNames.length ? 'var(--accent)' : 'var(--border)'}`,
+            }}
+            title="Select all sources"
+          >
+            All
+          </button>
+          <button
+            onClick={() => setSelectedSources(new Set())}
+            className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium transition-all"
+            style={{
+              background: selectedSources.size === 0 ? 'var(--accent-soft)' : 'var(--surface)',
+              color: selectedSources.size === 0 ? 'var(--accent)' : 'var(--text-muted)',
+              border: `1px solid ${selectedSources.size === 0 ? 'var(--accent)' : 'var(--border)'}`,
+            }}
+            title="Deselect all sources"
+          >
+            None
+          </button>
           {sourceNames.map(name => {
             const isActive = selectedSources.has(name);
             return (
@@ -324,9 +347,9 @@ export default function Transactions() {
       ) : (
         <div className="space-y-5">
           {sourceNames.filter(name => selectedSources.has(name)).map(sourceName => {
-            const group = sourceGroups[sourceName];
-            const groupDebit = group.filter(t => t.type !== 'credit' && !t.is_reimbursable).reduce((s, t) => s + t.amount, 0);
-            const groupCredit = group.filter(t => t.type === 'credit' && !t.is_reimbursable).reduce((s, t) => s + t.amount, 0);
+            const group = sourceGroups[sourceName].filter(t => typeFilter === 'all' || t.type === typeFilter);
+            const groupDebit = group.filter(t => t.type !== 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
+            const groupCredit = group.filter(t => t.type === 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
             const groupNet = groupDebit - groupCredit;
 
             const isCollapsed = collapsedSources.has(sourceName);
@@ -451,7 +474,9 @@ export default function Transactions() {
                 {/* Transaction Rows */}
                 <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '480px' }}>
                   {group.map((t, idx) => {
-                    const rowBg = t.is_reimbursable
+                    const isPayment = t.category_name === 'Payments';
+                    const isStrikethrough = t.is_reimbursable || isPayment;
+                    const rowBg = isStrikethrough
                       ? 'var(--table-row-hover)'
                       : idx % 2 === 1 ? 'var(--row-stripe)' : 'transparent';
                     return (
@@ -469,23 +494,28 @@ export default function Transactions() {
                       <div className="grid grid-cols-[80px_1fr_130px_140px_56px] gap-3 items-center">
                       <span
                         className="text-xs font-medium tabular-nums"
-                        style={{ fontFamily: 'var(--font-mono)', color: t.is_reimbursable ? 'var(--text-muted)' : 'var(--text-secondary)' }}
+                        style={{ fontFamily: 'var(--font-mono)', color: isStrikethrough ? 'var(--text-muted)' : 'var(--text-secondary)' }}
                       >
                         {formatDate(t.date)}
                       </span>
 
-                      <span
-                        className={`text-sm truncate pr-2 transition-colors ${t.is_reimbursable ? 'line-through' : ''}`}
-                        style={{ color: t.is_reimbursable ? 'var(--text-muted)' : 'var(--text-secondary)' }}
-                      >
-                        {t.description}
-                      </span>
+                      <div className="min-w-0 pr-2">
+                        <span
+                          className={`text-sm truncate block transition-colors ${isStrikethrough ? 'line-through' : ''}`}
+                          style={{ color: isStrikethrough ? 'var(--text-muted)' : 'var(--text-secondary)' }}
+                        >
+                          {t.description}
+                        </span>
+                        {isPayment && (
+                          <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>Excluded</span>
+                        )}
+                      </div>
 
                       <span
-                        className={`text-sm font-semibold text-right pr-3 tabular-nums ${t.is_reimbursable ? 'line-through' : ''}`}
+                        className={`text-sm font-semibold text-right pr-3 tabular-nums ${isStrikethrough ? 'line-through' : ''}`}
                         style={{
                           fontFamily: 'var(--font-mono)',
-                          color: t.is_reimbursable ? 'var(--text-muted)' : t.type === 'credit' ? 'var(--success)' : 'var(--danger)',
+                          color: isStrikethrough ? 'var(--text-muted)' : t.type === 'credit' ? 'var(--success)' : 'var(--danger)',
                         }}
                       >
                         {t.type === 'credit' ? '+' : '-'}{formatCurrency(t.amount)}
@@ -500,7 +530,7 @@ export default function Transactions() {
                           background: t.category_color ? t.category_color + '18' : 'var(--input-bg)',
                           border: `1px solid ${t.category_color ? t.category_color + '40' : 'var(--border)'}`,
                           color: t.category_id ? 'var(--text-secondary)' : 'var(--text-muted)',
-                          opacity: t.is_reimbursable ? 0.5 : 1,
+                          opacity: isStrikethrough ? 0.5 : 1,
                         }}
                       >
                         <option value="" style={{ color: 'var(--text-muted)' }}>Uncategorized</option>
@@ -510,6 +540,13 @@ export default function Transactions() {
                       </select>
 
                       <div className="flex justify-center">
+                        {isPayment ? (
+                          <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--empty-icon-bg)', color: 'var(--text-muted)', opacity: 0.4 }} title="Excluded from totals (Payment)">
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636" />
+                            </svg>
+                          </span>
+                        ) : (
                         <button
                           onClick={() => toggleReimbursable(t.id, t.is_reimbursable)}
                           onDoubleClick={e => e.stopPropagation()}
@@ -524,6 +561,7 @@ export default function Transactions() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
                           </svg>
                         </button>
+                        )}
                       </div>
                       </div>
                       {t.notes && (

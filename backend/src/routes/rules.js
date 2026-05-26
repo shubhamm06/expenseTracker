@@ -27,23 +27,53 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
+router.patch('/:id', (req, res) => {
+  const db = getDb();
+  const { pattern, category_id } = req.body;
+  const rule = db.prepare('SELECT * FROM rules WHERE id = ?').get(req.params.id);
+  if (!rule) return res.status(404).json({ error: 'Not found' });
+
+  if (pattern !== undefined) {
+    db.prepare('UPDATE rules SET pattern = ? WHERE id = ?').run(pattern.toLowerCase(), req.params.id);
+  }
+  if (category_id !== undefined) {
+    db.prepare('UPDATE rules SET category_id = ? WHERE id = ?').run(category_id, req.params.id);
+  }
+  res.json({ success: true });
+});
+
 router.post('/apply', (req, res) => {
   const db = getDb();
   const rules = db.prepare('SELECT * FROM rules').all();
   let applied = 0;
 
-  const uncategorized = db.prepare('SELECT * FROM transactions WHERE category_id IS NULL').all();
-  const updateStmt = db.prepare('UPDATE transactions SET category_id = ? WHERE id = ?');
+  // Find the Payments category (excluded from totals but not marked as not-mine)
+  const paymentsCategory = db.prepare("SELECT id FROM categories WHERE name = 'Payments'").get();
+  const paymentsCatId = paymentsCategory ? paymentsCategory.id : null;
 
-  for (const txn of uncategorized) {
+  const eligible = db.prepare("SELECT * FROM transactions WHERE category_id IS NULL OR category_source = 'rule'").all();
+  const updateStmt = db.prepare("UPDATE transactions SET category_id = ?, category_source = 'rule' WHERE id = ?");
+
+
+  for (const txn of eligible) {
     const desc = txn.description.toLowerCase();
+    let matched = false;
     for (const rule of rules) {
       const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
       if (patterns.some(p => desc.includes(p))) {
-        updateStmt.run(rule.category_id, txn.id);
-        applied++;
+        if (txn.category_id !== rule.category_id) {
+          updateStmt.run(rule.category_id, txn.id);
+          applied++;
+        }
+
+        matched = true;
         break;
       }
+    }
+    if (!matched && txn.category_id !== null && txn.category_source === 'rule') {
+      db.prepare("UPDATE transactions SET category_id = NULL, category_source = NULL WHERE id = ?").run(txn.id);
+
+      applied++;
     }
   }
 

@@ -7,6 +7,28 @@ import { getDb } from '../models/db.js';
 import { parsePdf, extractTransactionsFromText, extractSourceFromText } from '../services/pdfParser.js';
 
 const router = Router();
+
+function applyRulesAfterImport() {
+  const db = getDatabase();
+  const rules = db.prepare('SELECT * FROM rules').all();
+
+  const uncategorized = db.prepare("SELECT * FROM transactions WHERE category_id IS NULL OR category_source = 'rule'").all();
+  const updateStmt = db.prepare("UPDATE transactions SET category_id = ?, category_source = 'rule' WHERE id = ?");
+
+
+  for (const txn of uncategorized) {
+    const desc = txn.description.toLowerCase();
+    for (const rule of rules) {
+      const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
+      if (patterns.some(p => desc.includes(p))) {
+        updateStmt.run(rule.category_id, txn.id);
+
+        break;
+      }
+    }
+  }
+}
+
 const upload = multer({ dest: '/tmp/uploads/' });
 
 function storeFile(req) {
@@ -378,6 +400,7 @@ router.post('/pdf-import', (req, res) => {
     updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
   }
 
+  applyRulesAfterImport();
   res.json({ imported, duplicates, skipped, total });
 });
 
@@ -427,6 +450,7 @@ router.post('/import', (req, res) => {
     updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
   }
 
+  applyRulesAfterImport();
   res.json({ imported, duplicates, skipped, total });
 });
 

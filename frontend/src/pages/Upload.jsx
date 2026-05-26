@@ -1,3 +1,4 @@
+import confetti from "canvas-confetti";
 import { useState, useRef, useEffect } from 'react';
 import Modal from '../components/Modal';
 
@@ -106,7 +107,7 @@ export default function Upload() {
       setResult(data);
       setReviewFile(null);
       setReviewTransactions([]);
-      setStep('done');
+      setStep('done'); confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
       fetchUploadedFiles();
     } finally {
       setReviewLoading(false);
@@ -223,7 +224,7 @@ export default function Upload() {
       });
       const data = await res.json();
       setResult(data);
-      setStep('done');
+      setStep('done'); confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
       fetchUploadedFiles();
     } finally {
       setLoading(false);
@@ -261,7 +262,7 @@ export default function Upload() {
       });
       const data = await res.json();
       setResult(data);
-      setStep('done');
+      setStep('done'); confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
       fetchUploadedFiles();
     } finally {
       setLoading(false);
@@ -818,7 +819,7 @@ export default function Upload() {
                     onClick={() => isEmailPending && openReview(f)}
                   >
                     <span className="text-xs tabular-nums" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                      {new Date(f.uploaded_at + 'Z').toLocaleDateString()}
+                      {new Date(f.uploaded_at.replace(' ', 'T')).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })}
                     </span>
                     <div className="min-w-0">
                       {f.detected_source && (

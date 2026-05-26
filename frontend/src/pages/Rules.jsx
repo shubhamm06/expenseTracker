@@ -33,12 +33,7 @@ export default function Rules() {
     setNewPattern('');
     setNewCategoryId('');
     loadRules();
-    const res = await fetch('/api/rules/apply', { method: 'POST' });
-    const data = await res.json();
-    if (data.applied > 0) {
-      setApplyResult(data);
-      setTimeout(() => setApplyResult(null), 4000);
-    }
+    runCategorization();
   }
 
   async function deleteRule(id) {
@@ -46,11 +41,35 @@ export default function Rules() {
     loadRules();
   }
 
-  async function applyRules() {
-    const res = await fetch('/api/rules/apply', { method: 'POST' });
-    const data = await res.json();
-    setApplyResult(data);
-    setTimeout(() => setApplyResult(null), 4000);
+  async function updateRule(id, field, value) {
+    await fetch(`/api/rules/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value }),
+    });
+    loadRules();
+    runCategorization();
+  }
+
+  function runCategorization() {
+    Promise.all([
+      fetch('/api/rules/apply', { method: 'POST' }).then(r => r.json()),
+      fetch('/api/vouchers/usage/auto-categorize', { method: 'POST' }).then(r => r.json()),
+    ]).then(([txnRes, apRes]) => {
+      if (txnRes.applied > 0 || apRes.applied > 0) {
+        setApplyResult({ transactions: txnRes.applied, amazonPay: apRes.applied });
+        setTimeout(() => setApplyResult(null), 5000);
+      }
+    });
+  }
+
+  async function applyAll() {
+    const [txnRes, apRes] = await Promise.all([
+      fetch('/api/rules/apply', { method: 'POST' }).then(r => r.json()),
+      fetch('/api/vouchers/usage/auto-categorize', { method: 'POST' }).then(r => r.json()),
+    ]);
+    setApplyResult({ transactions: txnRes.applied, amazonPay: apRes.applied });
+    setTimeout(() => setApplyResult(null), 5000);
   }
 
   async function addCategory(e) {
@@ -84,7 +103,7 @@ export default function Rules() {
             Auto-categorize transactions based on description patterns
           </p>
         </div>
-        <button onClick={applyRules} className="btn-primary" title="Run all rules against uncategorized transactions across all months">
+        <button onClick={applyAll} className="btn-primary" title="Run all rules against uncategorized transactions">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" />
           </svg>
@@ -100,10 +119,22 @@ export default function Rules() {
             <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
           </svg>
           <p className="text-sm font-medium" style={{ color: 'var(--success)' }}>
-            Applied rules to {applyResult.applied} transaction{applyResult.applied !== 1 ? 's' : ''} across all months
+            Categorized: <span style={{ color: 'var(--purple)' }}>{applyResult.transactions} transaction{applyResult.transactions !== 1 ? 's' : ''}</span>
+            {' + '}
+            <span style={{ color: 'var(--amber)' }}>{applyResult.amazonPay} Amazon Pay</span>
           </p>
         </div>
       )}
+
+      {/* Info */}
+      <div className="flex items-start gap-3 px-5 py-4 rounded-lg text-sm leading-relaxed" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <svg className="w-4 h-4 shrink-0 mt-0.5" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+        </svg>
+        <p style={{ color: 'var(--text-secondary)' }}>
+          Rules auto-apply when added or edited. <span style={{ color: 'var(--text-primary)' }} className="font-medium">Rule-based categories will be updated</span> if you change a rule. <span style={{ color: 'var(--text-primary)' }} className="font-medium">Manually assigned categories won't be touched</span> by any rule change.
+        </p>
+      </div>
 
       {/* Add Rule Form */}
       <form onSubmit={addRule} className="card p-5">
@@ -221,7 +252,7 @@ export default function Rules() {
               <span>Category</span>
               <span />
             </div>
-            <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '480px' }}>
+            <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '500px' }}>
               {rules.map((rule, idx) => {
                 const rowBg = idx % 2 === 1 ? 'var(--row-stripe)' : 'transparent';
                 return (
@@ -232,13 +263,30 @@ export default function Rules() {
                     onMouseEnter={e => e.currentTarget.style.background = 'var(--table-row-hover)'}
                     onMouseLeave={e => e.currentTarget.style.background = rowBg}
                   >
-                    <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-                      {rule.pattern}
-                    </span>
-                    <span className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: rule.category_color || '#a8a29e' }} />
-                      <span className="truncate">{rule.category_name}</span>
-                    </span>
+                    <input
+                      type="text"
+                      defaultValue={rule.pattern}
+                      onBlur={e => { if (e.target.value !== rule.pattern) updateRule(rule.id, 'pattern', e.target.value); }}
+                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                      className="text-sm font-medium px-2 py-1 rounded-md transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+                      style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', background: 'transparent', border: '1px solid transparent' }}
+                      onFocus={e => { e.target.style.background = 'var(--input-bg)'; e.target.style.borderColor = 'var(--border)'; }}
+                      onBlurCapture={e => { e.target.style.background = 'transparent'; e.target.style.borderColor = 'transparent'; }}
+                    />
+                    <select
+                      value={rule.category_id}
+                      onChange={e => updateRule(rule.id, 'category_id', Number(e.target.value))}
+                      className="text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all truncate"
+                      style={{
+                        background: rule.category_color ? rule.category_color + '18' : 'var(--input-bg)',
+                        border: `1px solid ${rule.category_color ? rule.category_color + '40' : 'var(--border)'}`,
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      {categories.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
                     <div className="flex justify-end">
                       <button
                         onClick={() => deleteRule(rule.id)}

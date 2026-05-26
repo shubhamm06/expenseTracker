@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import Modal from '../components/Modal';
 
 export default function Vouchers() {
@@ -15,18 +16,64 @@ export default function Vouchers() {
   const [showAddUsage, setShowAddUsage] = useState(false);
   const [confirmModal, setConfirmModal] = useState(null);
   const [emailModal, setEmailModal] = useState(null);
+  const [syncSchedule, setSyncSchedule] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showShareToast, setShowShareToast] = useState(false);
+  const [voucherTypeFilter, setVoucherTypeFilter] = useState('all');
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
   });
 
   useEffect(() => {
-    loadVouchers();
+    loadVouchers().then(list => {
+      if (list && list.length > 0) {
+        const amazonPay = list.find(v => v.name === 'Amazon Pay Balance') || list[0];
+        selectVoucher(amazonPay);
+      }
+    });
     fetch('/api/categories').then(r => r.json()).then(setCategories);
+    fetch('/api/settings/sync-schedule').then(r => r.json()).then(setSyncSchedule);
   }, []);
 
-  function loadVouchers() {
-    fetch('/api/vouchers').then(r => r.json()).then(setVouchers);
+  const [quickAddModal, setQuickAddModal] = useState(null);
+
+  useEffect(() => {
+    const action = searchParams.get('action');
+    if (action === 'topup' && selectedVoucher) {
+      const amount = searchParams.get('amount') || '10000';
+      const desc = searchParams.get('desc') || 'Gift Card';
+      setQuickAddModal({
+        type: 'topup',
+        amount,
+        description: desc,
+        date: new Date().toLocaleDateString('en-CA'),
+        is_gift_card: true,
+      });
+      setSearchParams({});
+    } else if (action === 'spend' && selectedVoucher) {
+      const amount = searchParams.get('amount') || '';
+      const desc = searchParams.get('desc') || '';
+      setQuickAddModal({
+        type: 'spend',
+        amount,
+        description: desc,
+        date: new Date().toLocaleDateString('en-CA'),
+        category_id: '',
+      });
+      setSearchParams({});
+    }
+  }, [selectedVoucher, searchParams]);
+
+  function copyQuickAddLink() {
+    const baseUrl = window.location.origin + '/vouchers?action=topup';
+    navigator.clipboard.writeText(baseUrl);
+    setShowShareToast(true);
+    setTimeout(() => setShowShareToast(false), 2500);
+  }
+
+    function loadVouchers() {
+    return fetch('/api/vouchers').then(r => r.json()).then(data => { setVouchers(data); return data; });
   }
 
   async function createVoucher(e) {
@@ -67,7 +114,12 @@ export default function Vouchers() {
     setSelectedVoucher(v);
     setShowTopup(false);
     setShowAddUsage(false);
+    await autoCategorizeUsage();
     await loadActivity(v.id);
+  }
+
+  async function autoCategorizeUsage() {
+    await fetch('/api/vouchers/usage/auto-categorize', { method: 'POST' });
   }
 
   async function loadActivity(voucherId) {
@@ -83,6 +135,20 @@ export default function Vouchers() {
   useEffect(() => {
     if (selectedVoucher) loadActivity(selectedVoucher.id);
   }, [filters]);
+
+  function updateUsageCategory(usageId, categoryId) {
+    fetch(`/api/vouchers/usage/${usageId}/category`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category_id: categoryId }),
+    }).then(() => {
+      setUsage(prev => prev.map(u => {
+        if (u.id !== usageId) return u;
+        const cat = categories.find(c => c.id === categoryId);
+        return { ...u, category_id: categoryId, category_name: cat?.name || null, category_color: cat?.color || null };
+      }));
+    });
+  }
 
   async function addUsage(e) {
     e.preventDefault();
@@ -150,24 +216,60 @@ export default function Vouchers() {
             Track gift card balances and usage over time
           </p>
         </div>
-        <button onClick={() => setShowCreate(!showCreate)} className={showCreate ? 'btn-secondary' : 'btn-primary'} title={showCreate ? 'Close the new voucher form' : 'Create a new voucher to track balance and usage'}>
-          {showCreate ? (
-            <>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-              </svg>
-              Cancel
-            </>
-          ) : (
-            <>
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              New Voucher
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowCreate(!showCreate)} className={showCreate ? 'btn-secondary' : 'btn-primary'} title={showCreate ? 'Close the new voucher form' : 'Create a new voucher to track balance and usage'}>
+            {showCreate ? (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+                Cancel
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                New Voucher
+              </>
+            )}
+          </button>
+          <button onClick={copyQuickAddLink} className="btn-secondary" title="Copy quick-add link (share via WhatsApp for easy top-ups)">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.935-2.186 2.25 2.25 0 0 0-3.935 2.186Z" />
+            </svg>
+            Quick Link
+          </button>
+        </div>
       </div>
+
+      {/* Share Toast */}
+      {showShareToast && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg animate-scale-in" style={{ background: 'var(--success-soft)', border: '1px solid var(--border)' }}>
+          <svg className="w-4 h-4" style={{ color: 'var(--success)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+          </svg>
+          <p className="text-sm font-medium" style={{ color: 'var(--success)' }}>
+            Link copied! Share via WhatsApp for quick top-ups.
+          </p>
+        </div>
+      )}
+
+      {/* Amazon Pay Sync Schedule */}
+      {syncSchedule && syncSchedule.amazon_pay_sync.enabled && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+          <svg className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--amber)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            <span className="font-semibold" style={{ color: 'var(--amber)' }}>Amazon Pay auto-sync</span>{' — '}
+            {syncSchedule.amazon_pay_sync.schedule}, next at{' '}
+            <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+              {new Date(syncSchedule.amazon_pay_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
+            </span>
+          </span>
+        </div>
+      )}
 
       {/* Create Form */}
       {showCreate && (
@@ -299,6 +401,21 @@ export default function Vouchers() {
                   return <option key={y} value={y}>{y}</option>;
                 })}
               </select>
+              <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
+                {['all', 'spend', 'topup'].map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setVoucherTypeFilter(type)}
+                    className="px-2 py-1.5 text-[11px] font-medium transition-all"
+                    style={{
+                      background: voucherTypeFilter === type ? 'var(--accent)' : 'var(--card)',
+                      color: voucherTypeFilter === type ? '#fff' : 'var(--text-muted)',
+                    }}
+                  >
+                    {type === 'all' ? 'All' : type === 'spend' ? 'Spends' : 'Top-ups'}
+                  </button>
+                ))}
+              </div>
               <button
                 onClick={() => { setShowAddUsage(!showAddUsage); setShowTopup(false); }}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
@@ -433,11 +550,11 @@ export default function Vouchers() {
             </div>
           ) : (<>
             {/* Table Header */}
-            <div className="grid grid-cols-[80px_1fr_100px_120px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
+            <div className="grid grid-cols-[80px_1fr_130px_120px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
               style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
               <span>Date</span>
-              <span>Description</span>
-              <span>Type</span>
+              <span className="text-left">Description</span>
+              <span>Category</span>
               <span>Amount</span>
               <span></span>
             </div>
@@ -447,14 +564,15 @@ export default function Vouchers() {
               {[
                 ...usage.map(u => ({ ...u, _type: 'usage' })),
                 ...topups.map(t => ({ ...t, _type: 'topup' })),
-              ].sort((a, b) => b.date.localeCompare(a.date)).map((entry, idx) => {
+              ].filter(e => voucherTypeFilter === 'all' || (voucherTypeFilter === 'spend' ? e._type === 'usage' : e._type === 'topup'))
+              .sort((a, b) => b.date.localeCompare(a.date)).map((entry, idx) => {
                 const rowBg = idx % 2 === 1 ? 'var(--row-stripe)' : 'transparent';
                 const isManualTopup = entry._type === 'topup' && entry.source === 'manual';
                 const isRefund = entry._type === 'topup' && entry.source !== 'manual';
                 return (
                   <div
                     key={`${entry._type}-${entry.id}`}
-                    className="grid grid-cols-[80px_1fr_100px_120px_56px] gap-3 px-4 py-3 items-center transition-colors duration-150 animate-slide-in"
+                    className="grid grid-cols-[80px_1fr_130px_120px_56px] gap-3 px-4 py-3 items-center transition-colors duration-150 animate-slide-in"
                     style={{ animationDelay: `${Math.min(idx * 20, 400)}ms`, background: rowBg }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--table-row-hover)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}
@@ -463,30 +581,37 @@ export default function Vouchers() {
                       {new Date(entry.date + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
                     </span>
 
-                    <span className="text-sm truncate" style={{ color: 'var(--text-secondary)' }}>
-                      {entry.description || '—'}
-                    </span>
+                    <div className="min-w-0">
+                      <span className="text-sm truncate block" style={{ color: 'var(--text-secondary)' }}>
+                        {entry.description || '—'}
+                      </span>
+                      <span className="text-[10px] font-semibold mt-0.5 inline-block px-1.5 py-0.5 rounded" style={{
+                        background: entry._type === 'usage' ? 'var(--danger-soft)' : isManualTopup ? 'var(--success-soft)' : 'var(--accent-soft)',
+                        color: entry._type === 'usage' ? 'var(--danger)' : isManualTopup ? 'var(--success)' : 'var(--accent)',
+                      }}>
+                        {entry._type === 'usage' ? 'SPEND' : isManualTopup ? 'TOP UP' : 'REFUND'}
+                      </span>
+                    </div>
 
                     <div className="flex justify-center">
-                      {entry._type === 'usage' && entry.category_name && (
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full truncate" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                          {entry.category_name}
-                        </span>
-                      )}
-                      {isManualTopup && (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: 'var(--success-soft)', color: 'var(--success)' }}>
-                          TOP UP
-                        </span>
-                      )}
-                      {isRefund && (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-                          REFUND
-                        </span>
-                      )}
-                      {entry._type === 'usage' && !entry.category_name && (
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{ background: 'var(--surface)', color: 'var(--text-muted)' }}>
-                          SPEND
-                        </span>
+                      {entry._type === 'usage' ? (
+                        <select
+                          value={entry.category_id || ''}
+                          onChange={e => updateUsageCategory(entry.id, Number(e.target.value) || null)}
+                          className="text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all truncate w-full"
+                          style={{
+                            background: entry.category_color ? entry.category_color + '18' : 'var(--input-bg)',
+                            border: `1px solid ${entry.category_color ? entry.category_color + '40' : 'var(--border)'}`,
+                            color: entry.category_id ? 'var(--text-secondary)' : 'var(--text-muted)',
+                          }}
+                        >
+                          <option value="">Uncategorized</option>
+                          {categories.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>
                       )}
                     </div>
 
@@ -560,6 +685,44 @@ export default function Vouchers() {
         </div>
       )}
 
+      {/* Quick Add Modal */}
+      {quickAddModal && (
+        <QuickAddModal
+          data={quickAddModal}
+          voucher={selectedVoucher}
+          categories={categories}
+          onClose={() => setQuickAddModal(null)}
+          onSubmit={async (data) => {
+            if (data.type === 'topup') {
+              await fetch(`/api/vouchers/${selectedVoucher.id}/topup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  amount: Number(data.amount),
+                  date: data.date,
+                  description: data.description,
+                  source: data.is_gift_card ? 'manual' : 'refund',
+                }),
+              });
+            } else {
+              await fetch(`/api/vouchers/${selectedVoucher.id}/usage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  amount: Number(data.amount),
+                  date: data.date,
+                  description: data.description,
+                  category_id: data.category_id ? Number(data.category_id) : null,
+                }),
+              });
+            }
+            setQuickAddModal(null);
+            loadActivity(selectedVoucher.id);
+            loadVouchers();
+          }}
+        />
+      )}
+
       {/* Confirm Modal */}
       {confirmModal && (
         <ConfirmModal
@@ -575,6 +738,115 @@ export default function Vouchers() {
         <EmailDetailModal email={emailModal} onClose={() => setEmailModal(null)} />
       )}
     </div>
+  );
+}
+
+function QuickAddModal({ data, voucher, categories, onClose, onSubmit }) {
+  const [form, setForm] = useState(data);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    await onSubmit(form);
+    setSaving(false);
+  }
+
+  const isTopup = form.type === 'topup';
+
+  return (
+    <Modal open={true} onClose={onClose}>
+      <div className="text-center mb-5">
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ background: isTopup ? 'var(--success-soft)' : 'var(--danger-soft)' }}>
+          <svg className="w-7 h-7" style={{ color: isTopup ? 'var(--success)' : 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            {isTopup ? (
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            ) : (
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" />
+            )}
+          </svg>
+        </div>
+        <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+          {isTopup ? 'Add Balance' : 'Record Spend'}
+        </h2>
+        <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+          {voucher?.name}
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Amount</label>
+            <input
+              type="number"
+              required
+              value={form.amount}
+              onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+              className="input-field text-lg font-bold"
+              style={{ fontFamily: 'var(--font-mono)' }}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Date</label>
+            <input
+              type="date"
+              required
+              value={form.date}
+              onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+              className="input-field"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Description</label>
+          <input
+            type="text"
+            value={form.description}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+            className="input-field"
+            placeholder={isTopup ? 'Gift Card, Cashback, etc.' : 'What did you buy?'}
+          />
+        </div>
+
+        {isTopup && (
+          <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--text-secondary)' }}>
+            <input
+              type="checkbox"
+              checked={form.is_gift_card}
+              onChange={e => setForm(f => ({ ...f, is_gift_card: e.target.checked }))}
+              className="w-4 h-4 rounded accent-[var(--success)]"
+            />
+            Gift card purchase
+          </label>
+        )}
+
+        {!isTopup && (
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Category</label>
+            <select
+              value={form.category_id}
+              onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
+              className="select-field"
+            >
+              <option value="">Uncategorized</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+          <button type="submit" disabled={saving || !form.amount} className="btn-primary flex-1 justify-center">
+            {saving ? 'Saving...' : isTopup ? 'Add Balance' : 'Record Spend'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

@@ -220,7 +220,33 @@ export function initDb() {
     }
   }
 
-  // Ensure Amazon Pay Balance voucher exists
+  // Add category_source to track manual vs rule-based categorization
+  const txnCols = database.prepare("PRAGMA table_info(transactions)").all().map(c => c.name);
+  if (!txnCols.includes('category_source')) {
+    database.exec("ALTER TABLE transactions ADD COLUMN category_source TEXT DEFAULT 'rule'");
+  }
+
+  // Add category_source to voucher_usage
+  const usageCols2 = database.prepare("PRAGMA table_info(voucher_usage)").all().map(c => c.name);
+  if (!usageCols2.includes('category_source')) {
+    database.exec("ALTER TABLE voucher_usage ADD COLUMN category_source TEXT DEFAULT 'rule'");
+  }
+
+  // Ensure "Payments" category exists for credit card bill payments
+  const paymentsCategory = database.prepare("SELECT id FROM categories WHERE name = 'Payments'").get();
+  if (!paymentsCategory) {
+    database.prepare("INSERT INTO categories (name, color) VALUES ('Payments', '#475569')").run();
+  }
+  const paymentsCatId = database.prepare("SELECT id FROM categories WHERE name = 'Payments'").get().id;
+
+  // Ensure auto-categorization rule for payments exists
+  const paymentRule = database.prepare("SELECT id FROM rules WHERE category_id = ?").get(paymentsCatId);
+  if (!paymentRule) {
+    database.prepare("INSERT INTO rules (pattern, category_id) VALUES (?, ?)")
+      .run('payment received, cc payment, payment received. thank you', paymentsCatId);
+  }
+
+    // Ensure Amazon Pay Balance voucher exists
   const amazonVoucher = database.prepare("SELECT id FROM vouchers WHERE name = 'Amazon Pay Balance'").get();
   if (!amazonVoucher) {
     database.prepare(`

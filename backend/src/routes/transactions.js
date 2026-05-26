@@ -101,7 +101,7 @@ router.delete('/:id', (req, res) => {
 router.patch('/:id/category', (req, res) => {
   const db = getDb();
   const { category_id } = req.body;
-  db.prepare('UPDATE transactions SET category_id = ? WHERE id = ?').run(category_id, req.params.id);
+  db.prepare("UPDATE transactions SET category_id = ?, category_source = 'manual' WHERE id = ?").run(category_id, req.params.id);
   res.json({ success: true });
 });
 

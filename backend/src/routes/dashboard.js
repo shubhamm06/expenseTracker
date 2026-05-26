@@ -7,6 +7,9 @@ router.get('/summary', (req, res) => {
   const { month, year } = req.query;
   const db = getDb();
 
+  const paymentsCat = db.prepare("SELECT id FROM categories WHERE name = 'Payments'").get();
+  const paymentsCatId = paymentsCat ? paymentsCat.id : -1;
+
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
 
@@ -16,18 +19,20 @@ router.get('/summary', (req, res) => {
     WHERE type = 'debit'
       AND is_reimbursable = 0
       AND is_voucher_purchase = 0
+      AND (category_id IS NULL OR category_id != ?)
       AND strftime('%m', date) = ?
       AND strftime('%Y', date) = ?
-  `).get(m, y);
+  `).get(paymentsCatId, m, y);
 
   const totalCredit = db.prepare(`
     SELECT COALESCE(SUM(amount), 0) as total
     FROM transactions
     WHERE type = 'credit'
       AND is_reimbursable = 0
+      AND (category_id IS NULL OR category_id != ?)
       AND strftime('%m', date) = ?
       AND strftime('%Y', date) = ?
-  `).get(m, y);
+  `).get(paymentsCatId, m, y);
 
   const reimbursableTotal = db.prepare(`
     SELECT COALESCE(SUM(amount), 0) as total
@@ -156,6 +161,49 @@ router.get('/monthly-comparison', (req, res) => {
   }
 
   res.json(results.reverse());
+});
+
+router.get('/top-merchants', (req, res) => {
+  const { month, year, limit = 8 } = req.query;
+  const db = getDb();
+  const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
+  const y = year || String(new Date().getFullYear());
+
+  const merchants = db.prepare(`
+    SELECT description, SUM(amount) as total, COUNT(*) as count
+    FROM transactions
+    WHERE type = 'debit'
+      AND is_reimbursable = 0
+      AND is_voucher_purchase = 0
+      AND strftime('%m', date) = ?
+      AND strftime('%Y', date) = ?
+    GROUP BY description
+    ORDER BY total DESC
+    LIMIT ?
+  `).all(m, y, Number(limit));
+
+  res.json(merchants);
+});
+
+router.get('/source-breakdown', (req, res) => {
+  const { month, year } = req.query;
+  const db = getDb();
+  const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
+  const y = year || String(new Date().getFullYear());
+
+  const sources = db.prepare(`
+    SELECT source, 
+      SUM(CASE WHEN type = 'debit' AND is_reimbursable = 0 THEN amount ELSE 0 END) as debit,
+      SUM(CASE WHEN type = 'credit' AND is_reimbursable = 0 THEN amount ELSE 0 END) as credit,
+      COUNT(*) as count
+    FROM transactions
+    WHERE strftime('%m', date) = ?
+      AND strftime('%Y', date) = ?
+    GROUP BY source
+    ORDER BY debit DESC
+  `).all(m, y);
+
+  res.json(sources);
 });
 
 export default router;

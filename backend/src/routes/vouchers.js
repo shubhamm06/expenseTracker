@@ -30,7 +30,7 @@ router.get('/:id/usage', (req, res) => {
   const db = getDb();
   const { month, year } = req.query;
   let sql = `
-    SELECT vu.*, c.name as category_name
+    SELECT vu.*, c.name as category_name, c.color as category_color
     FROM voucher_usage vu
     LEFT JOIN categories c ON vu.category_id = c.id
     WHERE vu.voucher_id = ?
@@ -113,6 +113,40 @@ router.delete('/usage/:id', (req, res) => {
   db.prepare('DELETE FROM voucher_usage WHERE id = ?').run(req.params.id);
   db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? WHERE id = ?')
     .run(entry.amount, entry.voucher_id);
+  res.json({ success: true });
+});
+
+router.post('/usage/auto-categorize', (req, res) => {
+  const db = getDb();
+  const rules = db.prepare('SELECT * FROM rules').all();
+  const uncategorized = db.prepare("SELECT * FROM voucher_usage WHERE category_id IS NULL OR category_source = 'rule'").all();
+  let applied = 0;
+
+  const updateStmt = db.prepare("UPDATE voucher_usage SET category_id = ?, category_source = 'rule' WHERE id = ?");
+
+  for (const entry of uncategorized) {
+    const desc = (entry.description || '').toLowerCase();
+    for (const rule of rules) {
+      const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
+      if (patterns.some(p => desc.includes(p))) {
+        updateStmt.run(rule.category_id, entry.id);
+        applied++;
+        break;
+      }
+    }
+  }
+
+  res.json({ applied });
+});
+
+router.patch('/usage/:id/category', (req, res) => {
+  const db = getDb();
+  const { category_id } = req.body;
+  const entry = db.prepare('SELECT * FROM voucher_usage WHERE id = ?').get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Not found' });
+
+  db.prepare("UPDATE voucher_usage SET category_id = ?, category_source = 'manual' WHERE id = ?")
+    .run(category_id || null, req.params.id);
   res.json({ success: true });
 });
 

@@ -10,6 +10,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [confirmModal, setConfirmModal] = useState(null);
   const [showPasswords, setShowPasswords] = useState(false);
+  const [syncSchedule, setSyncSchedule] = useState(null);
 
   const [oauthMessage, setOauthMessage] = useState(null);
 
@@ -24,7 +25,7 @@ export default function Settings() {
       window.history.replaceState({}, '', '/settings');
     }
 
-    Promise.all([fetchAccounts(), fetchPasswords(), fetchSyncJobs()])
+    Promise.all([fetchAccounts(), fetchPasswords(), fetchSyncJobs(), fetchSyncSchedule()])
       .finally(() => setLoading(false));
   }, []);
 
@@ -54,6 +55,11 @@ export default function Settings() {
   async function fetchSyncJobs() {
     const res = await fetch('/api/settings/sync-jobs');
     if (res.ok) setSyncJobs(await res.json());
+  }
+
+  async function fetchSyncSchedule() {
+    const res = await fetch('/api/settings/sync-schedule');
+    if (res.ok) setSyncSchedule(await res.json());
   }
 
   function deleteAccount(id) {
@@ -139,6 +145,35 @@ export default function Settings() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+      )}
+
+      {/* Sync Schedule Info */}
+      {syncSchedule && (syncSchedule.statement_sync.enabled || syncSchedule.amazon_pay_sync.enabled) && (
+        <div className="flex items-center gap-4 flex-wrap px-4 py-3 rounded-xl" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+          <svg className="w-4 h-4 shrink-0" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+          <div className="flex items-center gap-4 flex-wrap text-xs">
+            {syncSchedule.statement_sync.enabled && (
+              <span style={{ color: 'var(--text-secondary)' }}>
+                <span style={{ color: 'var(--purple)' }} className="font-semibold">Statement sync</span>{' — '}
+                {syncSchedule.statement_sync.schedule}, next at{' '}
+                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {new Date(syncSchedule.statement_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
+                </span>
+              </span>
+            )}
+            {syncSchedule.amazon_pay_sync.enabled && (
+              <span style={{ color: 'var(--text-secondary)' }}>
+                <span style={{ color: 'var(--amber)' }} className="font-semibold">Amazon Pay sync</span>{' — '}
+                {syncSchedule.amazon_pay_sync.schedule}, next at{' '}
+                <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {new Date(syncSchedule.amazon_pay_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
+                </span>
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -432,7 +467,7 @@ function SyncHistorySection({ syncJobs }) {
         return (
           <span className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
             {j.completed_at
-              ? new Date(j.completed_at + (j.completed_at.includes('Z') ? '' : 'Z')).toLocaleDateString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+              ? new Date(j.completed_at.replace(' ', 'T')).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true })
               : j.started_at ? 'In progress' : 'Pending'}
           </span>
         );
@@ -534,7 +569,7 @@ function SyncHistorySection({ syncJobs }) {
           ) : selectedJob.sync_type === 'amazon_pay' ? (
             <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
               {jobResults.map(r => (
-                <div key={r.id} className="flex items-center gap-3 px-3 py-2 rounded-lg" style={{ background: 'var(--surface)' }}>
+                <div key={r.id} className="flex items-center gap-3 px-3 py-2 rounded-lg group" style={{ background: 'var(--surface)' }}>
                   <div className="shrink-0">
                     {r.status === 'success' ? (
                       <svg className="w-4 h-4" style={{ color: 'var(--success)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -561,6 +596,20 @@ function SyncHistorySection({ syncJobs }) {
                     }}>
                     {r.status === 'success' ? 'IMPORTED' : r.status === 'skipped' ? 'DUPLICATE' : r.status.toUpperCase()}
                   </span>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Delete this transaction?\n\n${r.filename}\n\nThis will also remove it from your voucher balance.`)) return;
+                      await fetch(`/api/settings/sync-results/${r.id}`, { method: 'DELETE' });
+                      setJobResults(prev => prev.filter(x => x.id !== r.id));
+                    }}
+                    className="p-1.5 rounded-lg transition-colors shrink-0"
+                    style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}
+                    title="Delete this transaction and revert voucher balance"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                    </svg>
+                  </button>
                 </div>
               ))}
             </div>
@@ -1178,7 +1227,7 @@ function formatSyncPeriod(period) {
 }
 
 function formatRelative(dateStr) {
-  const d = new Date(dateStr + (dateStr.includes('Z') ? '' : 'Z'));
+  const d = new Date(dateStr.replace(' ', 'T'));
   const now = new Date();
   const diff = now - d;
   const mins = Math.floor(diff / 60000);
@@ -1188,5 +1237,5 @@ function formatRelative(dateStr) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString();
+  return d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 }

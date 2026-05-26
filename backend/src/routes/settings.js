@@ -266,12 +266,94 @@ router.get('/sync-jobs', (req, res) => {
   res.json(jobs);
 });
 
+router.get('/sync-schedule', (req, res) => {
+  const now = new Date();
+
+  // Credit card sync: daily at 6 AM IST
+  const nextStatement = new Date(now);
+  nextStatement.setHours(6, 0, 0, 0);
+  if (now >= nextStatement) {
+    nextStatement.setDate(nextStatement.getDate() + 1);
+  }
+
+  // Amazon Pay sync: every 6 hours (0, 6, 12, 18)
+  const nextAmazon = new Date(now);
+  const currentHour = now.getHours();
+  const nextSlot = Math.ceil((currentHour + 1) / 6) * 6;
+  if (nextSlot >= 24) {
+    nextAmazon.setDate(nextAmazon.getDate() + 1);
+    nextAmazon.setHours(0, 0, 0, 0);
+  } else {
+    nextAmazon.setHours(nextSlot, 0, 0, 0);
+  }
+
+  const db = getDb();
+  const hasAmazonPay = db.prepare("SELECT COUNT(*) as count FROM email_accounts WHERE amazon_pay_sync = 1 AND status != 'disconnected'").get().count > 0;
+  const hasAccounts = db.prepare("SELECT COUNT(*) as count FROM email_accounts WHERE status != 'disconnected'").get().count > 0;
+
+  res.json({
+    statement_sync: {
+      enabled: hasAccounts,
+      schedule: 'Daily at 6:00 AM',
+      next_at: hasAccounts ? nextStatement.toISOString() : null,
+    },
+    amazon_pay_sync: {
+      enabled: hasAmazonPay,
+      schedule: 'Every 6 hours',
+      next_at: hasAmazonPay ? nextAmazon.toISOString() : null,
+    },
+  });
+});
+
 router.get('/sync-jobs/:id/results', (req, res) => {
   const db = getDb();
   const results = db.prepare(`
     SELECT * FROM email_sync_results WHERE sync_job_id = ? ORDER BY created_at
   `).all(req.params.id);
   res.json(results);
+});
+
+router.delete('/sync-results/:id', (req, res) => {
+  const db = getDb();
+  const result = db.prepare('SELECT * FROM email_sync_results WHERE id = ?').get(req.params.id);
+  if (!result) return res.status(404).json({ error: 'Not found' });
+
+  const filenameMatch = result.filename.match(/^\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$/);
+
+  if (result.status === 'success' && filenameMatch) {
+    const date = filenameMatch[1];
+    const label = filenameMatch[2];
+
+    const amountMatch = label.match(/₹([\d,]+(?:\.\d+)?)/);
+    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null;
+
+    if (amount) {
+      const isRefund = /refund|gift\s*card/i.test(label);
+
+      if (isRefund) {
+        const topup = db.prepare(
+          'SELECT id, voucher_id FROM voucher_topups WHERE date = ? AND amount = ? AND source = ?'
+        ).get(date, amount, 'email');
+        if (topup) {
+          db.prepare('DELETE FROM voucher_topups WHERE id = ?').run(topup.id);
+          db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount - ? WHERE id = ?')
+            .run(amount, topup.voucher_id);
+        }
+      } else {
+        const usage = db.prepare(
+          'SELECT id, voucher_id FROM voucher_usage WHERE date = ? AND amount = ?'
+        ).get(date, amount);
+        if (usage) {
+          db.prepare('DELETE FROM voucher_usage WHERE id = ?').run(usage.id);
+          db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? WHERE id = ?')
+            .run(amount, usage.voucher_id);
+        }
+      }
+    }
+  }
+
+  db.prepare('DELETE FROM email_sync_results WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
 });
 
 // --- Amazon Pay Sync ---
