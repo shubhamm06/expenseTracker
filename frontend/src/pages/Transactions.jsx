@@ -34,14 +34,13 @@ export default function Transactions() {
       month: String(filters.month),
       year: String(filters.year),
     });
-    fetch(`/api/transactions?${params}`).then(r => r.json()).then(setTransactions);
-    const now = new Date();
-    const isCurrentMonth = filters.month === now.getMonth() + 1 && filters.year === now.getFullYear();
-    if (isCurrentMonth) {
-      fetch(`/api/transactions/due-dates?${params}`).then(r => r.json()).then(setDueDates);
-    } else {
-      setDueDates({});
-    }
+    Promise.all([
+      fetch(`/api/transactions?${params}`).then(r => r.json()),
+      fetch(`/api/transactions/due-dates?${params}`).then(r => r.json()),
+    ]).then(([txns, dues]) => {
+      setTransactions(txns);
+      setDueDates(dues);
+    });
   }
 
   useEffect(() => {

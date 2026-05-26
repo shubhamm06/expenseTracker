@@ -392,53 +392,80 @@ async function handlePdfPreview(req, res, fileId) {
 
   try {
     const { text } = await parsePdf(req.file.path, password);
-    const detectedSource = extractSourceFromText(text);
-    const transactions = extractTransactionsFromText(text, detectedSource);
-    const dueDate = extractDueDateFromText(text);
+    return sendPdfResult(req, res, fileId, text);
+  } catch (err) {
+    if (err.message !== 'PASSWORD_REQUIRED') {
+      if (err.message === 'INVALID_PASSWORD') {
+        return res.status(401).json({ error: 'INVALID_PASSWORD', file_path: req.file.path, file_id: fileId });
+      }
+      return res.status(500).json({ error: err.message });
+    }
+  }
 
-    if (fileId) {
-      const updates = {};
-      if (detectedSource) updates.detected_source = detectedSource;
-      if (dueDate) updates.due_date = dueDate;
-      if (Object.keys(updates).length > 0) {
-        await supabase.from('uploaded_files').update(updates).eq('id', fileId);
+  // PDF is password-protected — try auto-generated passwords from cards + profile
+  const [{ data: cards }, { data: profileRow }] = await Promise.all([
+    supabase.from('cards').select('*'),
+    supabase.from('user_profile').select('*').limit(1).single(),
+  ]);
+
+  if ((cards && cards.length > 0) || profileRow) {
+    const { generatePasswords } = await import('../services/passwordGenerator.js');
+    const candidates = generatePasswords(cards || [], profileRow || {});
+
+    for (const entry of candidates) {
+      try {
+        const { text } = await parsePdf(req.file.path, entry.password);
+        if (fileId) storeDecryptedPdf(fileId, req.file.path, entry.password);
+        return sendPdfResult(req, res, fileId, text);
+      } catch {
+        continue;
       }
     }
+  }
 
-    if (transactions.length === 0) {
-      return res.json({
-        type: 'pdf',
-        raw_text: text.substring(0, 3000),
-        transactions: [],
-        total_rows: 0,
-        file_path: req.file.path,
-        file_id: fileId,
-        detected_source: detectedSource,
-        due_date: dueDate,
-        message: 'Could not auto-detect transactions. You may need to review the extracted text.',
-      });
+  // None of the auto-passwords worked — ask the user
+  return res.status(401).json({ error: 'PASSWORD_REQUIRED', file_path: req.file.path, file_id: fileId });
+}
+
+function sendPdfResult(req, res, fileId, text) {
+  const detectedSource = extractSourceFromText(text);
+  const transactions = extractTransactionsFromText(text, detectedSource);
+  const dueDate = extractDueDateFromText(text);
+
+  if (fileId) {
+    const updates = {};
+    if (detectedSource) updates.detected_source = detectedSource;
+    if (dueDate) updates.due_date = dueDate;
+    if (Object.keys(updates).length > 0) {
+      supabase.from('uploaded_files').update(updates).eq('id', fileId).then(() => {});
     }
+  }
 
-    const preview = transactions.slice(0, 10);
-    res.json({
+  if (transactions.length === 0) {
+    return res.json({
       type: 'pdf',
-      transactions: preview,
-      total_rows: transactions.length,
+      raw_text: text.substring(0, 3000),
+      transactions: [],
+      total_rows: 0,
       file_path: req.file.path,
       file_id: fileId,
-      all_transactions: transactions,
       detected_source: detectedSource,
       due_date: dueDate,
+      message: 'Could not auto-detect transactions. You may need to review the extracted text.',
     });
-  } catch (err) {
-    if (err.message === 'PASSWORD_REQUIRED') {
-      return res.status(401).json({ error: 'PASSWORD_REQUIRED', file_path: req.file.path, file_id: fileId });
-    }
-    if (err.message === 'INVALID_PASSWORD') {
-      return res.status(401).json({ error: 'INVALID_PASSWORD', file_path: req.file.path, file_id: fileId });
-    }
-    res.status(500).json({ error: err.message });
   }
+
+  const preview = transactions.slice(0, 10);
+  return res.json({
+    type: 'pdf',
+    transactions: preview,
+    total_rows: transactions.length,
+    file_path: req.file.path,
+    file_id: fileId,
+    all_transactions: transactions,
+    detected_source: detectedSource,
+    due_date: dueDate,
+  });
 }
 
 router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
@@ -458,9 +485,11 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
 
     if (fileId) {
       storeDecryptedPdf(fileId, filePath, password);
-      if (dueDate) {
-        const db = getDb();
-        db.prepare('UPDATE uploaded_files SET due_date = ? WHERE id = ?').run(dueDate, fileId);
+      const updates = {};
+      if (detectedSource) updates.detected_source = detectedSource;
+      if (dueDate) updates.due_date = dueDate;
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('uploaded_files').update(updates).eq('id', fileId);
       }
     }
 

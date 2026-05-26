@@ -46,13 +46,23 @@ router.get('/due-dates', async (req, res) => {
   const startDate = `${year}-${month.padStart(2, '0')}-01`;
   const endDate = `${year}-${month.padStart(2, '0')}-31`;
 
+  // Find sources that have transactions in this month
+  const { data: sources } = await supabase
+    .from('transactions')
+    .select('source')
+    .gte('date', startDate)
+    .lte('date', endDate)
+    .not('source', 'is', null);
+
+  const uniqueSources = [...new Set((sources || []).map(s => s.source))];
+  if (uniqueSources.length === 0) return res.json({});
+
+  // Get due dates for those sources from uploaded_files
   const { data: rows } = await supabase
     .from('uploaded_files')
     .select('detected_source, due_date')
     .not('due_date', 'is', null)
-    .not('detected_source', 'is', null)
-    .gte('due_date', startDate)
-    .lte('due_date', endDate)
+    .in('detected_source', uniqueSources)
     .order('uploaded_at', { ascending: false });
 
   const dueDates = {};

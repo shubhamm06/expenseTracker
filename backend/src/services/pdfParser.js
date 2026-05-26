@@ -528,6 +528,29 @@ export function extractDueDateFromText(text) {
     oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
   };
 
+  // Patterns for "Month Day, Year" format (e.g., "Due byJune 5, 2026")
+  const monthDayYearPatterns = [
+    /due\s*(?:by|on|before)\s*(\w{3,9})\s*(\d{1,2}),?\s*(\d{4})/i,
+    /(?:payment\s*)?due\s*date\s*[:\-]?\s*(\w{3,9})\s*(\d{1,2}),?\s*(\d{4})/i,
+    /pay\s*(?:by|before|on)\s*(\w{3,9})\s*(\d{1,2}),?\s*(\d{4})/i,
+    /last\s*date\s*(?:for|of)\s*payment\s*[:\-]?\s*(\w{3,9})\s*(\d{1,2}),?\s*(\d{4})/i,
+  ];
+
+  for (const pattern of monthDayYearPatterns) {
+    const match = fullText.match(pattern);
+    if (match) {
+      const monthStr = months[match[1].toLowerCase()];
+      if (!monthStr) continue;
+      const day = match[2].padStart(2, '0');
+      const year = match[3];
+      const numMonth = parseInt(monthStr, 10);
+      const numDay = parseInt(day, 10);
+      if (numMonth < 1 || numMonth > 12 || numDay < 1 || numDay > 31) continue;
+      return `${year}-${monthStr}-${day}`;
+    }
+  }
+
+  // Patterns for "Day Month Year" format (e.g., "due date: 15/06/2026")
   const dueDatePatterns = [
     /(?:payment\s*)?due\s*date\s*[:\-]?\s*(\d{1,2})[\/\-\s](\d{2}|\w{3,9})[\/\-\s](\d{4})/i,
     /(?:total\s*)?(?:amount\s*)?due\s*(?:by|on|before)\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
