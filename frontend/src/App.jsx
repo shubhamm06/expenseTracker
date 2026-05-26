@@ -7,8 +7,11 @@ import Upload from './pages/Upload';
 import Rules from './pages/Rules';
 import Vouchers from './pages/Vouchers';
 import Settings from './pages/Settings';
+import Login from './pages/Login';
+import Onboarding from './pages/Onboarding';
 import { LoadingProvider, LoadingBar } from './components/LoadingBar';
 import { useFetchInterceptor } from './hooks/useFetchInterceptor';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 const ThemeContext = createContext();
 
@@ -38,17 +41,37 @@ function ThemeProvider({ children }) {
 function App() {
   return (
     <ThemeProvider>
-      <LoadingProvider>
-        <BrowserRouter>
-          <AppShell />
-        </BrowserRouter>
-      </LoadingProvider>
+      <AuthProvider>
+        <LoadingProvider>
+          <BrowserRouter>
+            <AuthGate />
+          </BrowserRouter>
+        </LoadingProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }
 
-function AppShell() {
+function AuthGate() {
   useFetchInterceptor();
+  const { user, loading, needsSetup } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <Login />;
+  if (needsSetup) return <Onboarding />;
+  return <AppShell />;
+}
+
+function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
@@ -117,6 +140,7 @@ function MobileHeader({ onMenuClick }) {
 function Sidebar({ open }) {
   const location = useLocation();
   const { dark, toggle } = useTheme();
+  const { user, signOut } = useAuth();
 
   const links = [
     { to: '/', label: 'Dashboard', icon: ChartIcon },
@@ -162,6 +186,14 @@ function Sidebar({ open }) {
       </nav>
 
       <div className="sidebar-footer">
+        <div className="sidebar-user">
+          <span className="user-email">{user?.email}</span>
+          <button onClick={signOut} className="signout-btn" title="Sign out">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
+            </svg>
+          </button>
+        </div>
         <button onClick={toggle} className="theme-toggle">
           <div className={`toggle-track ${dark ? 'dark' : ''}`}>
             <motion.div

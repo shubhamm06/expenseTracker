@@ -11,6 +11,7 @@ router.get('/summary', async (req, res) => {
   const { data, error } = await supabase.rpc('get_dashboard_summary', {
     p_month: m,
     p_year: y,
+    p_user_id: req.userId,
   });
 
   if (error) return res.status(500).json({ error: error.message });
@@ -22,6 +23,7 @@ router.get('/monthly-comparison', async (req, res) => {
 
   const { data, error } = await supabase.rpc('get_monthly_comparison', {
     p_months: Number(months),
+    p_user_id: req.userId,
   });
 
   if (error) return res.status(500).json({ error: error.message });
@@ -44,6 +46,7 @@ router.get('/top-merchants', async (req, res) => {
     supabase
       .from('transactions')
       .select('description, amount, category_id')
+      .eq('user_id', req.userId)
       .eq('type', 'debit')
       .eq('is_reimbursable', false)
       .eq('is_voucher_purchase', false)
@@ -52,6 +55,7 @@ router.get('/top-merchants', async (req, res) => {
     supabase
       .from('categories')
       .select('id')
+      .eq('user_id', req.userId)
       .in('name', ['Payments', 'Gift Card']),
   ]);
 
@@ -90,11 +94,13 @@ router.get('/source-breakdown', async (req, res) => {
     supabase
       .from('transactions')
       .select('source, type, amount, is_reimbursable, category_id')
+      .eq('user_id', req.userId)
       .gte('date', startDate)
       .lt('date', endDate),
     supabase
       .from('categories')
       .select('id')
+      .eq('user_id', req.userId)
       .in('name', ['Payments', 'Gift Card']),
   ]);
 

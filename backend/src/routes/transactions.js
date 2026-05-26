@@ -9,6 +9,7 @@ router.get('/', async (req, res) => {
   let query = supabase
     .from('transactions')
     .select('*, categories(name, color)')
+    .eq('user_id', req.userId)
     .order('date', { ascending: false });
 
   if (month && year) {
@@ -50,6 +51,7 @@ router.get('/due-dates', async (req, res) => {
   const { data: sources } = await supabase
     .from('transactions')
     .select('source')
+    .eq('user_id', req.userId)
     .gte('date', startDate)
     .lte('date', endDate)
     .not('source', 'is', null);
@@ -61,6 +63,7 @@ router.get('/due-dates', async (req, res) => {
   const { data: rows } = await supabase
     .from('uploaded_files')
     .select('detected_source, due_date')
+    .eq('user_id', req.userId)
     .not('due_date', 'is', null)
     .in('detected_source', uniqueSources)
     .order('uploaded_at', { ascending: false });
@@ -79,6 +82,7 @@ router.get('/:id', async (req, res) => {
     .from('transactions')
     .select('*, categories(name, color)')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (error || !data) return res.status(404).json({ error: 'Not found' });
@@ -105,6 +109,7 @@ router.post('/', async (req, res) => {
       source: source || null,
       is_reimbursable: !!is_reimbursable,
       notes: notes || null,
+      user_id: req.userId,
     })
     .select('id')
     .single();
@@ -129,7 +134,8 @@ router.put('/:id', async (req, res) => {
       is_voucher_purchase: !!is_voucher_purchase,
       notes: notes || null,
     })
-    .eq('id', req.params.id);
+    .eq('id', req.params.id)
+    .eq('user_id', req.userId);
 
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
@@ -142,12 +148,14 @@ router.patch('/rename-source', async (req, res) => {
   const { data: txnData } = await supabase
     .from('transactions')
     .update({ source: new_source })
+    .eq('user_id', req.userId)
     .eq('source', old_source)
     .select('id');
 
   const { data: fileData } = await supabase
     .from('uploaded_files')
     .update({ detected_source: new_source })
+    .eq('user_id', req.userId)
     .eq('detected_source', old_source)
     .select('id');
 
@@ -165,6 +173,7 @@ router.delete('/by-source', async (req, res) => {
   const { data } = await supabase
     .from('transactions')
     .delete()
+    .eq('user_id', req.userId)
     .eq('source', source)
     .select('id');
 
@@ -172,7 +181,7 @@ router.delete('/by-source', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  await supabase.from('transactions').delete().eq('id', req.params.id);
+  await supabase.from('transactions').delete().eq('id', req.params.id).eq('user_id', req.userId);
   res.json({ success: true });
 });
 
@@ -181,13 +190,14 @@ router.patch('/:id/category', async (req, res) => {
   await supabase
     .from('transactions')
     .update({ category_id, category_source: 'manual' })
-    .eq('id', req.params.id);
+    .eq('id', req.params.id)
+    .eq('user_id', req.userId);
   res.json({ success: true });
 });
 
 router.patch('/:id/reimbursable', async (req, res) => {
   const { is_reimbursable } = req.body;
-  await supabase.from('transactions').update({ is_reimbursable: !!is_reimbursable }).eq('id', req.params.id);
+  await supabase.from('transactions').update({ is_reimbursable: !!is_reimbursable }).eq('id', req.params.id).eq('user_id', req.userId);
   res.json({ success: true });
 });
 

@@ -2,20 +2,20 @@ import { Router } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
-import { readFile } from 'fs/promises';
 import { execFileSync } from 'child_process';
 import { supabase } from '../models/supabase.js';
-import { parsePdf, extractTransactionsFromText, extractSourceFromText, extractDueDateFromText } from '../services/pdfParser.js';
+import { parsePdf, extractTransactionsFromText, extractSourceFromText } from '../services/pdfParser.js';
 
 const router = Router();
 
-async function applyRulesAfterImport() {
-  const { data: rules } = await supabase.from('rules').select('*');
+async function applyRulesAfterImport(userId) {
+  const { data: rules } = await supabase.from('rules').select('*').eq('user_id', userId);
   if (!rules || rules.length === 0) return;
 
   const { data: uncategorized } = await supabase
     .from('transactions')
     .select('*')
+    .eq('user_id', userId)
     .or('category_id.is.null,category_source.eq.rule');
 
   if (!uncategorized || uncategorized.length === 0) return;
@@ -62,6 +62,7 @@ async function storeFile(req) {
       mime_type: req.file.mimetype || 'application/octet-stream',
       size: req.file.size,
       storage_path: storagePath,
+      user_id: req.userId,
     })
     .select('id')
     .single();
@@ -70,8 +71,8 @@ async function storeFile(req) {
   return data.id;
 }
 
-async function importTransactions(rows, source) {
-  const { data: rules } = await supabase.from('rules').select('*');
+async function importTransactions(rows, source, userId) {
+  const { data: rules } = await supabase.from('rules').select('*').eq('user_id', userId);
 
   const groups = {};
   const normalized = [];
@@ -102,6 +103,7 @@ async function importTransactions(rows, source) {
       return supabase
         .from('transactions')
         .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
         .eq('date', date)
         .eq('description', description)
         .eq('amount', amount)
@@ -141,6 +143,7 @@ async function importTransactions(rows, source) {
       type: row.type,
       category_id: categoryId,
       source: source || null,
+      user_id: userId,
     });
     inserted[row.key]++;
     imported++;
@@ -202,6 +205,7 @@ router.get('/files', async (req, res) => {
   await supabase
     .from('uploaded_files')
     .update({ status: 'failed', status_message: 'Import not completed' })
+    .eq('user_id', req.userId)
     .eq('status', 'pending')
     .eq('source_type', 'manual')
     .lt('uploaded_at', thirtyMinAgo);
@@ -211,6 +215,7 @@ router.get('/files', async (req, res) => {
   let query = supabase
     .from('uploaded_files')
     .select('id, original_name, mime_type, size, status, status_message, transactions_imported, source_type, detected_source, skipped_transactions, uploaded_at')
+    .eq('user_id', req.userId)
     .order('uploaded_at', { ascending: false })
     .limit(Math.min(Math.max(parseInt(qLimit) || 100, 1), 500));
 
@@ -233,6 +238,7 @@ router.get('/files/by-source/download', async (req, res) => {
     .from('uploaded_files')
     .select('original_name, mime_type, storage_path')
     .eq('detected_source', source)
+    .eq('user_id', req.userId)
     .order('uploaded_at', { ascending: false })
     .limit(1)
     .single();
@@ -256,6 +262,7 @@ router.get('/files/:id/transactions', async (req, res) => {
     .from('uploaded_files')
     .select('id, pending_transactions, detected_source, status')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -270,6 +277,7 @@ router.post('/files/:id/import', async (req, res) => {
     .from('uploaded_files')
     .select('id, pending_transactions, detected_source, status')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -279,7 +287,7 @@ router.post('/files/:id/import', async (req, res) => {
   const transactions = JSON.parse(file.pending_transactions);
   const source = req.body?.source || file.detected_source;
 
-  const { imported, duplicates, skipped, total } = await importTransactions(transactions, source);
+  const { imported, duplicates, skipped, total } = await importTransactions(transactions, source, req.userId);
 
   const msg = duplicates > 0 ? `${duplicates} duplicate(s) skipped` : null;
   const skippedJson = skipped.length > 0 ? JSON.stringify(skipped) : null;
@@ -303,6 +311,7 @@ router.get('/files/:id/download', async (req, res) => {
     .from('uploaded_files')
     .select('original_name, mime_type, storage_path')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -324,6 +333,7 @@ router.get('/files/:id/view', async (req, res) => {
     .from('uploaded_files')
     .select('original_name, mime_type, storage_path')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -345,6 +355,7 @@ router.delete('/files/:id', async (req, res) => {
     .from('uploaded_files')
     .select('storage_path')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -353,7 +364,7 @@ router.delete('/files/:id', async (req, res) => {
     await supabase.storage.from('uploads').remove([file.storage_path]);
   }
 
-  await supabase.from('uploaded_files').delete().eq('id', req.params.id);
+  await supabase.from('uploaded_files').delete().eq('id', req.params.id).eq('user_id', req.userId);
   res.json({ success: true });
 });
 
@@ -362,6 +373,8 @@ router.patch('/files/:id/status', async (req, res) => {
   if (!status || !['pending', 'imported', 'failed'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
+  const { data: file } = await supabase.from('uploaded_files').select('id').eq('id', req.params.id).eq('user_id', req.userId).single();
+  if (!file) return res.status(404).json({ error: 'File not found' });
   await updateFileStatus(req.params.id, status, 0, status_message || null);
   res.json({ success: true });
 });
@@ -376,7 +389,7 @@ router.post('/preview', upload.single('file'), async (req, res) => {
     return handlePdfPreview(req, res, fileId);
   }
 
-  const content = await readFile(req.file.path, 'utf-8');
+  const content = readFileSync(req.file.path, 'utf-8');
   const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
 
   if (records.length === 0) return res.status(400).json({ error: 'Empty CSV' });
@@ -392,80 +405,48 @@ async function handlePdfPreview(req, res, fileId) {
 
   try {
     const { text } = await parsePdf(req.file.path, password);
-    return sendPdfResult(req, res, fileId, text);
-  } catch (err) {
-    if (err.message !== 'PASSWORD_REQUIRED') {
-      if (err.message === 'INVALID_PASSWORD') {
-        return res.status(401).json({ error: 'INVALID_PASSWORD', file_path: req.file.path, file_id: fileId });
-      }
-      return res.status(500).json({ error: err.message });
+    const detectedSource = extractSourceFromText(text);
+    const transactions = extractTransactionsFromText(text, detectedSource);
+
+    if (detectedSource && fileId) {
+      await supabase
+        .from('uploaded_files')
+        .update({ detected_source: detectedSource })
+        .eq('id', fileId);
     }
-  }
 
-  // PDF is password-protected — try auto-generated passwords from cards + profile
-  const [{ data: cards }, { data: profileRow }] = await Promise.all([
-    supabase.from('cards').select('*'),
-    supabase.from('user_profile').select('*').limit(1).single(),
-  ]);
-
-  if ((cards && cards.length > 0) || profileRow) {
-    const { generatePasswords } = await import('../services/passwordGenerator.js');
-    const candidates = generatePasswords(cards || [], profileRow || {});
-
-    for (const entry of candidates) {
-      try {
-        const { text } = await parsePdf(req.file.path, entry.password);
-        if (fileId) storeDecryptedPdf(fileId, req.file.path, entry.password);
-        return sendPdfResult(req, res, fileId, text);
-      } catch {
-        continue;
-      }
+    if (transactions.length === 0) {
+      return res.json({
+        type: 'pdf',
+        raw_text: text.substring(0, 3000),
+        transactions: [],
+        total_rows: 0,
+        file_path: req.file.path,
+        file_id: fileId,
+        detected_source: detectedSource,
+        message: 'Could not auto-detect transactions. You may need to review the extracted text.',
+      });
     }
-  }
 
-  // None of the auto-passwords worked — ask the user
-  return res.status(401).json({ error: 'PASSWORD_REQUIRED', file_path: req.file.path, file_id: fileId });
-}
-
-function sendPdfResult(req, res, fileId, text) {
-  const detectedSource = extractSourceFromText(text);
-  const transactions = extractTransactionsFromText(text, detectedSource);
-  const dueDate = extractDueDateFromText(text);
-
-  if (fileId) {
-    const updates = {};
-    if (detectedSource) updates.detected_source = detectedSource;
-    if (dueDate) updates.due_date = dueDate;
-    if (Object.keys(updates).length > 0) {
-      supabase.from('uploaded_files').update(updates).eq('id', fileId).then(() => {});
-    }
-  }
-
-  if (transactions.length === 0) {
-    return res.json({
+    const preview = transactions.slice(0, 10);
+    res.json({
       type: 'pdf',
-      raw_text: text.substring(0, 3000),
-      transactions: [],
-      total_rows: 0,
+      transactions: preview,
+      total_rows: transactions.length,
       file_path: req.file.path,
       file_id: fileId,
+      all_transactions: transactions,
       detected_source: detectedSource,
-      due_date: dueDate,
-      message: 'Could not auto-detect transactions. You may need to review the extracted text.',
     });
+  } catch (err) {
+    if (err.message === 'PASSWORD_REQUIRED') {
+      return res.status(401).json({ error: 'PASSWORD_REQUIRED', file_path: req.file.path, file_id: fileId });
+    }
+    if (err.message === 'INVALID_PASSWORD') {
+      return res.status(401).json({ error: 'INVALID_PASSWORD', file_path: req.file.path, file_id: fileId });
+    }
+    res.status(500).json({ error: err.message });
   }
-
-  const preview = transactions.slice(0, 10);
-  return res.json({
-    type: 'pdf',
-    transactions: preview,
-    total_rows: transactions.length,
-    file_path: req.file.path,
-    file_id: fileId,
-    all_transactions: transactions,
-    detected_source: detectedSource,
-    due_date: dueDate,
-  });
 }
 
 router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
@@ -481,16 +462,9 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
     const { text } = await parsePdf(filePath, password);
     const detectedSource = extractSourceFromText(text);
     const transactions = extractTransactionsFromText(text, detectedSource);
-    const dueDate = extractDueDateFromText(text);
 
     if (fileId) {
       storeDecryptedPdf(fileId, filePath, password);
-      const updates = {};
-      if (detectedSource) updates.detected_source = detectedSource;
-      if (dueDate) updates.due_date = dueDate;
-      if (Object.keys(updates).length > 0) {
-        await supabase.from('uploaded_files').update(updates).eq('id', fileId);
-      }
     }
 
     if (transactions.length === 0) {
@@ -501,7 +475,6 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
         total_rows: 0,
         file_path: filePath,
         detected_source: detectedSource,
-        due_date: dueDate,
         message: 'Could not auto-detect transactions from this PDF.',
       });
     }
@@ -514,7 +487,6 @@ router.post('/pdf-unlock', upload.single('file'), async (req, res) => {
       file_path: filePath,
       all_transactions: transactions,
       detected_source: detectedSource,
-      due_date: dueDate,
     });
   } catch (err) {
     if (err.message === 'INVALID_PASSWORD') {
@@ -530,21 +502,24 @@ router.post('/pdf-import', async (req, res) => {
     return res.status(400).json({ error: 'transactions array is required' });
   }
 
-  const { imported, duplicates, skipped, total } = await importTransactions(transactions, source);
+  const { imported, duplicates, skipped, total } = await importTransactions(transactions, source, req.userId);
 
   if (file_id) {
-    const msg = duplicates > 0 ? `${duplicates} duplicate(s) skipped` : null;
-    await updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
+    const { data: ownedFile } = await supabase.from('uploaded_files').select('id').eq('id', file_id).eq('user_id', req.userId).single();
+    if (ownedFile) {
+      const msg = duplicates > 0 ? `${duplicates} duplicate(s) skipped` : null;
+      await updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
+    }
   }
 
-  await applyRulesAfterImport();
+  await applyRulesAfterImport(req.userId);
   res.json({ imported, duplicates, skipped, total });
 });
 
 router.post('/import', async (req, res) => {
   const { file_path, mapping, source, file_id } = req.body;
 
-  const content = await readFile(file_path, 'utf-8');
+  const content = readFileSync(file_path, 'utf-8');
   const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
 
   const rows = [];
@@ -579,14 +554,17 @@ router.post('/import', async (req, res) => {
     rows.push({ date, description, amount, type });
   }
 
-  const { imported, duplicates, skipped, total } = await importTransactions(rows, source);
+  const { imported, duplicates, skipped, total } = await importTransactions(rows, source, req.userId);
 
   if (file_id) {
-    const msg = duplicates > 0 ? `${duplicates} duplicate(s) skipped` : null;
-    await updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
+    const { data: ownedFile } = await supabase.from('uploaded_files').select('id').eq('id', file_id).eq('user_id', req.userId).single();
+    if (ownedFile) {
+      const msg = duplicates > 0 ? `${duplicates} duplicate(s) skipped` : null;
+      await updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
+    }
   }
 
-  await applyRulesAfterImport();
+  await applyRulesAfterImport(req.userId);
   res.json({ imported, duplicates, skipped, total });
 });
 

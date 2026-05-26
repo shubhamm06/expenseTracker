@@ -52,6 +52,7 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
       status: 'running',
       started_at: new Date().toISOString(),
       sync_period: syncPeriod || null,
+      user_id: account.user_id,
     })
     .select('id')
     .single();
@@ -92,7 +93,7 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
       }
     }
 
-    const voucher = await getOrCreateAmazonPayVoucher();
+    const voucher = await getOrCreateAmazonPayVoucher(account.user_id);
 
     const { data: existingUsage } = await supabase
       .from('voucher_usage')
@@ -131,7 +132,7 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
             for (const txn of results) {
               if (txn === null || txn === 'no_match') continue;
               totalFound++;
-              const result = await processTransaction(txn, voucher, existingUsage || [], existingTopups || [], jobId);
+              const result = await processTransaction(txn, voucher, existingUsage || [], existingTopups || [], jobId, account.user_id);
               if (result === 'new') newCount++;
               else if (result === 'skipped') skipped++;
               processed++;
@@ -149,7 +150,7 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
           for (const txn of results) {
             if (txn === null || txn === 'no_match') continue;
             totalFound++;
-            const result = await processTransaction(txn, voucher, existingUsage || [], existingTopups || [], jobId);
+            const result = await processTransaction(txn, voucher, existingUsage || [], existingTopups || [], jobId, account.user_id);
             if (result === 'new') newCount++;
             else if (result === 'skipped') skipped++;
             processed++;
@@ -269,7 +270,7 @@ function parseTransaction(combined, parsed, subject, emailMetadata) {
   return null;
 }
 
-async function processTransaction(txn, voucher, existingUsage, existingTopups, jobId) {
+async function processTransaction(txn, voucher, existingUsage, existingTopups, jobId, userId) {
   const date = txn.date
     ? txn.date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
     : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -294,6 +295,7 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
         filename: `[${date}] ${label}`,
         status: 'skipped',
         error_message: 'Duplicate',
+        user_id: userId,
       });
       return 'skipped';
     }
@@ -304,6 +306,7 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
       date,
       description: txn.description,
       email_metadata: txn.emailMetadata || null,
+      user_id: userId,
     });
 
     const { data: v } = await supabase
@@ -322,6 +325,7 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
       filename: `[${date}] ${label}`,
       status: 'success',
       transactions_imported: 1,
+      user_id: userId,
     });
     existingUsage.push({ date, amount: txn.amount, description: txn.description });
     return 'new';
@@ -341,6 +345,7 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
         filename: `[${date}] ${label}`,
         status: 'skipped',
         error_message: 'Duplicate',
+        user_id: userId,
       });
       return 'skipped';
     }
@@ -352,6 +357,7 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
       description: txn.description,
       source: 'email',
       email_metadata: txn.emailMetadata || null,
+      user_id: userId,
     });
 
     const { data: v } = await supabase
@@ -370,6 +376,7 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
       filename: `[${date}] ${label}`,
       status: 'success',
       transactions_imported: 1,
+      user_id: userId,
     });
     existingTopups.push({ date, amount: txn.amount });
     return 'new';
@@ -378,11 +385,12 @@ async function processTransaction(txn, voucher, existingUsage, existingTopups, j
   return null;
 }
 
-export async function getOrCreateAmazonPayVoucher() {
+export async function getOrCreateAmazonPayVoucher(userId) {
   const { data: voucher } = await supabase
     .from('vouchers')
     .select('*')
     .eq('name', 'Amazon Pay Balance')
+    .eq('user_id', userId)
     .single();
 
   if (voucher) return voucher;
@@ -394,6 +402,7 @@ export async function getOrCreateAmazonPayVoucher() {
       initial_amount: 0,
       remaining_amount: 0,
       purchase_date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
+      user_id: userId,
     })
     .select('*')
     .single();

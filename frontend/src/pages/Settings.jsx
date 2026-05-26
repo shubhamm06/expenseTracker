@@ -11,6 +11,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [confirmModal, setConfirmModal] = useState(null);
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
+  const [syncThrottle, setSyncThrottle] = useState({ statement: { '1m': 3, '2m': 2 }, amazon_pay: { '1m': 3, '2m': 2 } });
   
   const [syncSchedule, setSyncSchedule] = useState(null);
 
@@ -27,7 +28,7 @@ export default function Settings() {
       window.history.replaceState({}, '', '/settings');
     }
 
-    Promise.all([fetchAccounts(), fetchCards(), fetchProfile(), fetchSyncJobs(), fetchSyncSchedule(), fetchPendingReviewCount()])
+    Promise.all([fetchAccounts(), fetchCards(), fetchProfile(), fetchSyncJobs(), fetchSyncSchedule(), fetchPendingReviewCount(), fetchSyncThrottle()])
       .finally(() => setLoading(false));
   }, []);
 
@@ -40,6 +41,7 @@ export default function Settings() {
       fetchSyncJobs();
       fetchAccounts();
       fetchPendingReviewCount();
+      fetchSyncThrottle();
     }, 5000);
 
     return () => clearInterval(interval);
@@ -82,6 +84,11 @@ export default function Settings() {
     }
   }
 
+  async function fetchSyncThrottle() {
+    const res = await fetch('/api/settings/sync-throttle');
+    if (res.ok) setSyncThrottle(await res.json());
+  }
+
   async function fetchSyncSchedule() {
     const res = await fetch('/api/settings/sync-schedule');
     if (res.ok) setSyncSchedule(await res.json());
@@ -115,13 +122,21 @@ export default function Settings() {
       });
       return;
     }
-    await fetch(`/api/settings/email-accounts/${id}/sync`, {
+    const res = await fetch(`/api/settings/email-accounts/${id}/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(period ? { period } : {}),
     });
+    if (res.status === 429) {
+      const data = await res.json();
+      setConfirmModal({ title: 'Limit Reached', message: data.error, confirmLabel: 'OK', onConfirm: () => setConfirmModal(null) });
+      return;
+    }
     fetchAccounts();
     fetchSyncJobs();
+    fetchSyncThrottle();
+    // Re-fetch after a short delay to catch the running state
+    setTimeout(() => { fetchAccounts(); fetchSyncJobs(); }, 1000);
   }
 
   function deleteCard(id) {
@@ -245,8 +260,8 @@ export default function Settings() {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    <AmazonPaySyncButton account={a} onRefresh={() => { fetchAccounts(); fetchSyncJobs(); }} />
-                    <SyncButton accountId={a.id} disabled={a.sync_running} onSync={triggerSync} />
+                    <AmazonPaySyncButton account={a} onRefresh={() => { fetchAccounts(); fetchSyncJobs(); fetchSyncThrottle(); }} throttle={syncThrottle.amazon_pay} />
+                    <SyncButton accountId={a.id} disabled={a.sync_running} onSync={triggerSync} throttle={syncThrottle.statement} />
                     <button onClick={() => deleteAccount(a.id)}
                       className="p-1.5 rounded-lg hover:bg-[var(--surface)] transition-colors" title="Disconnect and remove this email account">
                       <svg className="w-4 h-4" style={{ color: 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1022,7 +1037,7 @@ function ProfileSection({ profile, onSave }) {
   );
 }
 
-function AmazonPaySyncButton({ account, onRefresh }) {
+function AmazonPaySyncButton({ account, onRefresh, throttle }) {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
 
@@ -1053,10 +1068,8 @@ function AmazonPaySyncButton({ account, onRefresh }) {
   const periods = [
     { key: null, label: 'Since last sync' },
     { key: '1w', label: 'Last 1 week' },
-    { key: '1m', label: 'Last 1 month' },
-    { key: '2m', label: 'Last 2 months' },
-    { key: '6m', label: 'Last 6 months' },
-    { key: '12m', label: 'Last 12 months' },
+    { key: '1m', label: 'Last 1 month', limit: true },
+    { key: '2m', label: 'Last 2 months', limit: true },
   ];
 
   if (!account.amazon_pay_sync) {
@@ -1101,16 +1114,27 @@ function AmazonPaySyncButton({ account, onRefresh }) {
             <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
             <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg shadow-lg"
               style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
-              {periods.map(p => (
-                <button
-                  key={p.key || 'default'}
-                  onClick={() => handleSync(p.key)}
-                  className="w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[var(--surface)]"
-                  style={{ color: 'var(--text-primary)' }}
-                >
-                  {p.label}
-                </button>
-              ))}
+              {periods.map(p => {
+                const remaining = p.limit && throttle ? throttle[p.key] : null;
+                const exhausted = remaining !== null && remaining <= 0;
+                return (
+                  <button
+                    key={p.key || 'default'}
+                    onClick={() => !exhausted && handleSync(p.key)}
+                    disabled={exhausted}
+                    className="w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[var(--surface)] flex items-center justify-between"
+                    style={{ color: exhausted ? 'var(--text-muted)' : 'var(--text-primary)', opacity: exhausted ? 0.5 : 1 }}
+                  >
+                    <span>{p.label}</span>
+                    {remaining !== null && (
+                      <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
+                        background: remaining > 0 ? 'var(--accent-soft)' : 'var(--danger-soft)',
+                        color: remaining > 0 ? 'var(--accent)' : 'var(--danger)',
+                      }}>{remaining} left</span>
+                    )}
+                  </button>
+                );
+              })}
               <div className="border-t" style={{ borderColor: 'var(--border)' }}>
                 <button
                   onClick={handleToggle}
@@ -1128,7 +1152,7 @@ function AmazonPaySyncButton({ account, onRefresh }) {
   );
 }
 
-function SyncButton({ accountId, disabled, onSync }) {
+function SyncButton({ accountId, disabled, onSync, throttle }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -1146,10 +1170,8 @@ function SyncButton({ accountId, disabled, onSync }) {
   const periods = [
     { key: null, label: 'Since last sync' },
     { key: '1w', label: 'Last 1 week' },
-    { key: '1m', label: 'Last 1 month' },
-    { key: '2m', label: 'Last 2 months' },
-    { key: '6m', label: 'Last 6 months' },
-    { key: '12m', label: 'Last 12 months' },
+    { key: '1m', label: 'Last 1 month', limit: true },
+    { key: '2m', label: 'Last 2 months', limit: true },
   ];
 
   function handleSelect(period) {
@@ -1172,18 +1194,29 @@ function SyncButton({ accountId, disabled, onSync }) {
         Statements
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg shadow-lg"
+        <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg shadow-lg"
           style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
-          {periods.map(p => (
-            <button
-              key={p.key || 'default'}
-              onClick={() => handleSelect(p.key)}
-              className="w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[var(--surface)]"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {p.label}
-            </button>
-          ))}
+          {periods.map(p => {
+            const remaining = p.limit && throttle ? throttle[p.key] : null;
+            const exhausted = remaining !== null && remaining <= 0;
+            return (
+              <button
+                key={p.key || 'default'}
+                onClick={() => !exhausted && handleSelect(p.key)}
+                disabled={exhausted}
+                className="w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[var(--surface)] flex items-center justify-between"
+                style={{ color: exhausted ? 'var(--text-muted)' : 'var(--text-primary)', opacity: exhausted ? 0.5 : 1 }}
+              >
+                <span>{p.label}</span>
+                {remaining !== null && (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{
+                    background: remaining > 0 ? 'var(--accent-soft)' : 'var(--danger-soft)',
+                    color: remaining > 0 ? 'var(--accent)' : 'var(--danger)',
+                  }}>{remaining} left</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1249,7 +1282,7 @@ function StatusBadge({ status }) {
 
 function formatSyncPeriod(period) {
   if (!period) return 'Since last';
-  const labels = { '1w': '1 week', '1m': '1 month', '2m': '2 months', '6m': '6 months', '12m': '12 months' };
+  const labels = { '1w': '1 week', '1m': '1 month', '2m': '2 months' };
   return labels[period] || period;
 }
 

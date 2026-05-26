@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { requireAuth } from './middleware/auth.js';
+import authRouter from './routes/auth.js';
 import transactionsRouter from './routes/transactions.js';
 import categoriesRouter from './routes/categories.js';
 import rulesRouter from './routes/rules.js';
@@ -16,6 +18,9 @@ const PORT = 3002;
 app.use(cors());
 app.use(express.json());
 
+app.use('/api', requireAuth);
+
+app.use('/api/auth', authRouter);
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/rules', rulesRouter);

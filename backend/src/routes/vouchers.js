@@ -7,6 +7,7 @@ router.get('/', async (req, res) => {
   const { data, error } = await supabase
     .from('vouchers')
     .select('*')
+    .eq('user_id', req.userId)
     .order('purchase_date', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
@@ -24,6 +25,7 @@ router.post('/', async (req, res) => {
       remaining_amount: initial_amount,
       purchase_date,
       source_transaction_id: source_transaction_id || null,
+      user_id: req.userId,
     })
     .select('id')
     .single();
@@ -34,7 +36,8 @@ router.post('/', async (req, res) => {
     await supabase
       .from('transactions')
       .update({ is_voucher_purchase: true, voucher_id: data.id })
-      .eq('id', source_transaction_id);
+      .eq('id', source_transaction_id)
+      .eq('user_id', req.userId);
   }
 
   res.status(201).json({ id: data.id });
@@ -47,6 +50,7 @@ router.get('/:id/usage', async (req, res) => {
     .from('voucher_usage')
     .select('*, categories(name, color)')
     .eq('voucher_id', req.params.id)
+    .eq('user_id', req.userId)
     .order('date', { ascending: false });
 
   if (month && year) {
@@ -79,6 +83,7 @@ router.post('/:id/usage', async (req, res) => {
     .from('vouchers')
     .select('*')
     .eq('id', voucherId)
+    .eq('user_id', req.userId)
     .single();
 
   if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
@@ -94,6 +99,7 @@ router.post('/:id/usage', async (req, res) => {
       date,
       description: description || null,
       category_id: category_id || null,
+      user_id: req.userId,
     })
     .select('id')
     .single();
@@ -103,7 +109,8 @@ router.post('/:id/usage', async (req, res) => {
   await supabase
     .from('vouchers')
     .update({ remaining_amount: voucher.remaining_amount - amount })
-    .eq('id', voucherId);
+    .eq('id', voucherId)
+    .eq('user_id', req.userId);
 
   res.status(201).json({ id: data.id });
 });
@@ -115,6 +122,7 @@ router.get('/:id/topups', async (req, res) => {
     .from('voucher_topups')
     .select('*')
     .eq('voucher_id', req.params.id)
+    .eq('user_id', req.userId)
     .order('date', { ascending: false });
 
   if (month && year) {
@@ -140,6 +148,7 @@ router.post('/:id/topup', async (req, res) => {
     .from('vouchers')
     .select('*')
     .eq('id', voucherId)
+    .eq('user_id', req.userId)
     .single();
 
   if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
@@ -156,6 +165,7 @@ router.post('/:id/topup', async (req, res) => {
       date: topupDate,
       description: description || null,
       source: topupSource,
+      user_id: req.userId,
     })
     .select('id')
     .single();
@@ -169,12 +179,14 @@ router.post('/:id/topup', async (req, res) => {
         remaining_amount: voucher.remaining_amount + amount,
         initial_amount: voucher.initial_amount + amount,
       })
-      .eq('id', voucherId);
+      .eq('id', voucherId)
+      .eq('user_id', req.userId);
   } else {
     await supabase
       .from('vouchers')
       .update({ remaining_amount: voucher.remaining_amount + amount })
-      .eq('id', voucherId);
+      .eq('id', voucherId)
+      .eq('user_id', req.userId);
   }
 
   res.status(201).json({ id: data.id });
@@ -185,27 +197,29 @@ router.delete('/usage/:id', async (req, res) => {
     .from('voucher_usage')
     .select('*')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
   const [, { data: voucher }] = await Promise.all([
-    supabase.from('voucher_usage').delete().eq('id', req.params.id),
-    supabase.from('vouchers').select('remaining_amount').eq('id', entry.voucher_id).single(),
+    supabase.from('voucher_usage').delete().eq('id', req.params.id).eq('user_id', req.userId),
+    supabase.from('vouchers').select('remaining_amount').eq('id', entry.voucher_id).eq('user_id', req.userId).single(),
   ]);
 
   await supabase
     .from('vouchers')
     .update({ remaining_amount: voucher.remaining_amount + entry.amount })
-    .eq('id', entry.voucher_id);
+    .eq('id', entry.voucher_id)
+    .eq('user_id', req.userId);
 
   res.json({ success: true });
 });
 
 router.post('/usage/auto-categorize', async (req, res) => {
   const [{ data: rules }, { data: uncategorized }] = await Promise.all([
-    supabase.from('rules').select('*'),
-    supabase.from('voucher_usage').select('*').or('category_id.is.null,category_source.eq.rule'),
+    supabase.from('rules').select('*').eq('user_id', req.userId),
+    supabase.from('voucher_usage').select('*').eq('user_id', req.userId).or('category_id.is.null,category_source.eq.rule'),
   ]);
 
   const updatesByCategory = {};
@@ -239,6 +253,7 @@ router.patch('/usage/:id/category', async (req, res) => {
     .from('voucher_usage')
     .select('*')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!entry) return res.status(404).json({ error: 'Not found' });
@@ -246,7 +261,8 @@ router.patch('/usage/:id/category', async (req, res) => {
   await supabase
     .from('voucher_usage')
     .update({ category_id: category_id || null, category_source: 'manual' })
-    .eq('id', req.params.id);
+    .eq('id', req.params.id)
+    .eq('user_id', req.userId);
 
   res.json({ success: true });
 });
@@ -256,16 +272,18 @@ router.delete('/topup/:id', async (req, res) => {
     .from('voucher_topups')
     .select('*')
     .eq('id', req.params.id)
+    .eq('user_id', req.userId)
     .single();
 
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  await supabase.from('voucher_topups').delete().eq('id', req.params.id);
+  await supabase.from('voucher_topups').delete().eq('id', req.params.id).eq('user_id', req.userId);
 
   const { data: voucher } = await supabase
     .from('vouchers')
     .select('remaining_amount, initial_amount')
     .eq('id', entry.voucher_id)
+    .eq('user_id', req.userId)
     .single();
 
   const updates = { remaining_amount: voucher.remaining_amount - entry.amount };
@@ -273,7 +291,7 @@ router.delete('/topup/:id', async (req, res) => {
     updates.initial_amount = voucher.initial_amount - entry.amount;
   }
 
-  await supabase.from('vouchers').update(updates).eq('id', entry.voucher_id);
+  await supabase.from('vouchers').update(updates).eq('id', entry.voucher_id).eq('user_id', req.userId);
   res.json({ success: true });
 });
 
@@ -293,6 +311,7 @@ router.delete('/:id/clear-month', async (req, res) => {
     .from('voucher_usage')
     .select('*')
     .eq('voucher_id', voucherId)
+    .eq('user_id', req.userId)
     .gte('date', startDate)
     .lt('date', endDate);
 
@@ -300,6 +319,7 @@ router.delete('/:id/clear-month', async (req, res) => {
     .from('voucher_topups')
     .select('*')
     .eq('voucher_id', voucherId)
+    .eq('user_id', req.userId)
     .gte('date', startDate)
     .lt('date', endDate);
 
@@ -311,6 +331,7 @@ router.delete('/:id/clear-month', async (req, res) => {
     .from('voucher_usage')
     .delete()
     .eq('voucher_id', voucherId)
+    .eq('user_id', req.userId)
     .gte('date', startDate)
     .lt('date', endDate);
 
@@ -318,6 +339,7 @@ router.delete('/:id/clear-month', async (req, res) => {
     .from('voucher_topups')
     .delete()
     .eq('voucher_id', voucherId)
+    .eq('user_id', req.userId)
     .gte('date', startDate)
     .lt('date', endDate);
 
@@ -325,6 +347,7 @@ router.delete('/:id/clear-month', async (req, res) => {
     .from('vouchers')
     .select('remaining_amount, initial_amount')
     .eq('id', voucherId)
+    .eq('user_id', req.userId)
     .single();
 
   await supabase
@@ -333,19 +356,33 @@ router.delete('/:id/clear-month', async (req, res) => {
       remaining_amount: voucher.remaining_amount + totalUsage - totalTopups,
       initial_amount: voucher.initial_amount - manualTopups,
     })
-    .eq('id', voucherId);
+    .eq('id', voucherId)
+    .eq('user_id', req.userId);
 
   res.json({ success: true, deletedUsage: (usageRows || []).length, deletedTopups: (topupRows || []).length });
 });
 
 router.delete('/:id', async (req, res) => {
-  await supabase.from('voucher_usage').delete().eq('voucher_id', req.params.id);
-  await supabase.from('voucher_topups').delete().eq('voucher_id', req.params.id);
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('name, is_protected')
+    .eq('id', req.params.id)
+    .eq('user_id', req.userId)
+    .single();
+
+  if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
+  if (voucher.is_protected) {
+    return res.status(403).json({ error: `"${voucher.name}" is a system voucher and cannot be deleted` });
+  }
+
+  await supabase.from('voucher_usage').delete().eq('voucher_id', req.params.id).eq('user_id', req.userId);
+  await supabase.from('voucher_topups').delete().eq('voucher_id', req.params.id).eq('user_id', req.userId);
   await supabase
     .from('transactions')
     .update({ is_voucher_purchase: false, voucher_id: null })
-    .eq('voucher_id', req.params.id);
-  await supabase.from('vouchers').delete().eq('id', req.params.id);
+    .eq('voucher_id', req.params.id)
+    .eq('user_id', req.userId);
+  await supabase.from('vouchers').delete().eq('id', req.params.id).eq('user_id', req.userId);
   res.json({ success: true });
 });
 

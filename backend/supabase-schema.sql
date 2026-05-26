@@ -7,7 +7,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Categories
 CREATE TABLE IF NOT EXISTS categories (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
   color TEXT DEFAULT '#6b7280'
 );
 
@@ -87,7 +87,6 @@ CREATE TABLE IF NOT EXISTS uploaded_files (
   detected_source TEXT,
   pending_transactions TEXT,
   skipped_transactions TEXT,
-  due_date DATE,
   uploaded_at TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
 );
 
@@ -148,14 +147,30 @@ CREATE TABLE IF NOT EXISTS email_sync_results (
 );
 
 -- Create indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
-CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category_id);
-CREATE INDEX IF NOT EXISTS idx_transactions_source ON transactions(source);
-CREATE INDEX IF NOT EXISTS idx_voucher_usage_voucher ON voucher_usage(voucher_id);
-CREATE INDEX IF NOT EXISTS idx_voucher_topups_voucher ON voucher_topups(voucher_id);
+-- Primary access pattern indexes (user_id + most common filters)
+CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON transactions(user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_source ON transactions(user_id, source);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_category ON transactions(user_id, category_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_dedup ON transactions(user_id, date, description, amount, type);
+
+CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id);
+CREATE INDEX IF NOT EXISTS idx_rules_user ON rules(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_vouchers_user ON vouchers(user_id);
+CREATE INDEX IF NOT EXISTS idx_voucher_usage_user_voucher ON voucher_usage(user_id, voucher_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_voucher_topups_user_voucher ON voucher_topups(user_id, voucher_id, date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_status ON uploaded_files(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_source ON uploaded_files(user_id, detected_source);
+CREATE INDEX IF NOT EXISTS idx_uploaded_files_user_uploaded ON uploaded_files(user_id, uploaded_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_email_accounts_user ON email_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_email_sync_jobs_user ON email_sync_jobs(user_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_email_sync_jobs_account ON email_sync_jobs(email_account_id);
 CREATE INDEX IF NOT EXISTS idx_email_sync_results_job ON email_sync_results(sync_job_id);
-CREATE INDEX IF NOT EXISTS idx_uploaded_files_status ON uploaded_files(status);
+
+CREATE INDEX IF NOT EXISTS idx_cards_user ON cards(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profile_user ON user_profile(user_id);
 
 -- Seed default categories
 INSERT INTO categories (name, color) VALUES
@@ -168,9 +183,12 @@ INSERT INTO categories (name, color) VALUES
   ('Transport', '#ec4899'),
   ('Health', '#ef4444'),
   ('Entertainment', '#a855f7'),
+  ('Travel', '#0ea5e9'),
+  ('Education', '#6366f1'),
   ('Other', '#6b7280'),
-  ('Payments', '#475569')
-ON CONFLICT (name) DO NOTHING;
+  ('Payments', '#475569'),
+  ('Gift Card', '#f59e0b')
+ON CONFLICT (name, user_id) DO NOTHING;
 
 -- Seed payment rule
 INSERT INTO rules (pattern, category_id)
@@ -216,7 +234,7 @@ CREATE POLICY "service_role_all" ON email_sync_results FOR ALL USING (true) WITH
 -- Database functions for complex queries
 
 -- Dashboard summary
-CREATE OR REPLACE FUNCTION get_dashboard_summary(p_month TEXT, p_year TEXT)
+CREATE OR REPLACE FUNCTION get_dashboard_summary(p_month TEXT, p_year TEXT, p_user_id UUID DEFAULT NULL)
 RETURNS JSON AS $$
 DECLARE
   v_total_spend DOUBLE PRECISION;
@@ -231,7 +249,8 @@ BEGIN
   WHERE type = 'debit'
     AND is_reimbursable = FALSE
     AND is_voucher_purchase = FALSE
-    AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
+    AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card') AND user_id = p_user_id))
+    AND user_id = p_user_id
     AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year;
 
@@ -239,7 +258,8 @@ BEGIN
   FROM transactions
   WHERE type = 'credit'
     AND is_reimbursable = FALSE
-    AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
+    AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card') AND user_id = p_user_id))
+    AND user_id = p_user_id
     AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year;
 
@@ -247,17 +267,20 @@ BEGIN
   FROM transactions
   WHERE type = 'debit'
     AND is_reimbursable = TRUE
+    AND user_id = p_user_id
     AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year;
 
   SELECT COALESCE(SUM(amount), 0) INTO v_voucher_usage
   FROM voucher_usage
-  WHERE to_char(date::date, 'MM') = p_month
+  WHERE user_id = p_user_id
+    AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year;
 
   SELECT COALESCE(SUM(amount), 0) INTO v_voucher_topups
   FROM voucher_topups
-  WHERE to_char(date::date, 'MM') = p_month
+  WHERE user_id = p_user_id
+    AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year
     AND source != 'manual';
 
@@ -271,6 +294,7 @@ BEGIN
         AND t.is_reimbursable = FALSE
         AND t.is_voucher_purchase = FALSE
         AND (t.category_id IS NULL OR c.name NOT IN ('Payments', 'Gift Card'))
+        AND t.user_id = p_user_id
         AND to_char(t.date::date, 'MM') = p_month
         AND to_char(t.date::date, 'YYYY') = p_year
       GROUP BY c.name, c.color
@@ -278,7 +302,8 @@ BEGIN
       SELECT c.name, c.color, COALESCE(SUM(vu.amount), 0) as total
       FROM voucher_usage vu
       LEFT JOIN categories c ON vu.category_id = c.id
-      WHERE to_char(vu.date::date, 'MM') = p_month
+      WHERE vu.user_id = p_user_id
+        AND to_char(vu.date::date, 'MM') = p_month
         AND to_char(vu.date::date, 'YYYY') = p_year
       GROUP BY c.name, c.color
     ) combined
@@ -300,7 +325,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Monthly comparison
-CREATE OR REPLACE FUNCTION get_monthly_comparison(p_months INTEGER DEFAULT 6)
+CREATE OR REPLACE FUNCTION get_monthly_comparison(p_months INTEGER DEFAULT 6, p_user_id UUID DEFAULT NULL)
 RETURNS JSON AS $$
 DECLARE
   v_results JSON;
@@ -317,18 +342,21 @@ BEGIN
         WHERE type = 'debit'
           AND is_reimbursable = FALSE
           AND is_voucher_purchase = FALSE
-          AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
+          AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card') AND user_id = p_user_id))
+          AND user_id = p_user_id
           AND to_char(date::date, 'MM') = to_char(d, 'MM')
           AND to_char(date::date, 'YYYY') = to_char(d, 'YYYY')
       ) + (
         SELECT COALESCE(SUM(amount), 0)
         FROM voucher_usage
-        WHERE to_char(date::date, 'MM') = to_char(d, 'MM')
+        WHERE user_id = p_user_id
+          AND to_char(date::date, 'MM') = to_char(d, 'MM')
           AND to_char(date::date, 'YYYY') = to_char(d, 'YYYY')
       ) - (
         SELECT COALESCE(SUM(amount), 0)
         FROM voucher_topups
-        WHERE to_char(date::date, 'MM') = to_char(d, 'MM')
+        WHERE user_id = p_user_id
+          AND to_char(date::date, 'MM') = to_char(d, 'MM')
           AND to_char(date::date, 'YYYY') = to_char(d, 'YYYY')
           AND source != 'manual'
       ) as total,
@@ -337,7 +365,8 @@ BEGIN
         FROM transactions
         WHERE type = 'credit'
           AND is_reimbursable = FALSE
-          AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
+          AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card') AND user_id = p_user_id))
+          AND user_id = p_user_id
           AND to_char(date::date, 'MM') = to_char(d, 'MM')
           AND to_char(date::date, 'YYYY') = to_char(d, 'YYYY')
       ) as credit,

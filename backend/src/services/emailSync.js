@@ -33,6 +33,7 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
       status: 'running',
       started_at: new Date().toISOString(),
       sync_period: syncPeriod || null,
+      user_id: account.user_id,
     })
     .select('id')
     .single();
@@ -55,16 +56,28 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
     const { data: profile } = await supabase.from('user_profile').select('*').limit(1).single();
     const { generatePasswords } = await import('./passwordGenerator.js');
     const passwords = generatePasswords(cards || [], profile || {});
-    // For manual syncs with explicit period, skip files already processed
-    let alreadySyncedFiles = new Set();
+
+    // Per-user dedup: track files already processed to avoid duplicate pending entries
+    // Uses detected_source + first transaction date to differentiate same-bank statements from different months
+    let alreadySyncedKeys = new Set();
     if (sinceDays) {
       const { data: existingFiles } = await supabase
         .from('uploaded_files')
-        .select('original_name')
+        .select('original_name, detected_source, pending_transactions')
         .eq('source_type', 'email')
+        .eq('user_id', account.user_id)
         .in('status', ['pending', 'imported']);
       if (existingFiles) {
-        alreadySyncedFiles = new Set(existingFiles.map(f => f.original_name));
+        for (const f of existingFiles) {
+          let firstDate = '';
+          if (f.pending_transactions) {
+            try {
+              const txns = JSON.parse(f.pending_transactions);
+              if (txns.length > 0) firstDate = txns[0].date || '';
+            } catch {}
+          }
+          alreadySyncedKeys.add(`${(f.detected_source || '').toLowerCase()}|${firstDate}`);
+        }
       }
     }
 
@@ -75,10 +88,9 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
 
     let lastProgressUpdate = 0;
     await fetchAndProcessAttachments(account, sinceDate, async (attachment) => {
-      if (alreadySyncedFiles.has(attachment.filename)) return;
       totalFound++;
 
-      const result = await processAttachment(attachment, passwords || [], jobId);
+      const result = await processAttachment(attachment, passwords || [], jobId, account.user_id, alreadySyncedKeys);
       processed++;
       if (result.success) {
         totalImported++;
@@ -170,6 +182,7 @@ const STATEMENT_KEYWORDS = [
   'credit card bill',
   'card e-statement',
   'card estatement',
+  'credit card sta',
 ];
 
 // Subject must contain "card" to qualify as a credit card statement email
@@ -367,7 +380,7 @@ async function fetchAndProcessAttachments(account, sinceDate, onAttachment) {
   }
 }
 
-async function processAttachment(attachment, passwords, jobId) {
+async function processAttachment(attachment, passwords, jobId, userId, alreadySyncedKeys) {
   const tempPath = join(TEMP_DIR, `${Date.now()}-${attachment.filename}`);
 
   try {
@@ -381,6 +394,7 @@ async function processAttachment(attachment, passwords, jobId) {
         filename: attachment.filename,
         status: 'password_failed',
         error_message: 'No matching password found',
+        user_id: userId,
       });
       return { success: false };
     }
@@ -393,6 +407,7 @@ async function processAttachment(attachment, passwords, jobId) {
         filename: attachment.filename,
         status: 'skipped',
         error_message: 'Not a bank/card statement (bill, FD, or other document)',
+        user_id: userId,
       });
       return { success: false };
     }
@@ -405,6 +420,7 @@ async function processAttachment(attachment, passwords, jobId) {
         filename: attachment.filename,
         status: 'parse_failed',
         error_message: 'No transactions extracted',
+        user_id: userId,
       });
       return { success: false };
     }
@@ -416,6 +432,7 @@ async function processAttachment(attachment, passwords, jobId) {
         filename: attachment.filename,
         status: 'parse_failed',
         error_message: 'Extracted amounts are invalid',
+        user_id: userId,
       });
       return { success: false };
     }
@@ -437,6 +454,21 @@ async function processAttachment(attachment, passwords, jobId) {
 
     const dueDate = extractDueDateFromText(text);
 
+    // Per-user dedup: skip if this source + first transaction date combo already exists
+    const firstTxnDate = valid.length > 0 ? (valid[0].date || '') : '';
+    const displayName = `${attachment.filename}${detectedSource ? ' · ' + detectedSource : ''}${firstTxnDate ? ' · ' + firstTxnDate : ''}`;
+
+    if (alreadySyncedKeys && alreadySyncedKeys.has(`${(detectedSource || '').toLowerCase()}|${firstTxnDate}`)) {
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: displayName,
+        status: 'skipped',
+        error_message: 'Already synced',
+        user_id: userId,
+      });
+      return { success: false, skipped: true };
+    }
+
     // Upload to Supabase Storage
     const storagePath = `uploads/email/${Date.now()}-${attachment.filename}`;
     await supabase.storage
@@ -444,7 +476,7 @@ async function processAttachment(attachment, passwords, jobId) {
       .upload(storagePath, fileBuffer, { contentType: 'application/pdf' });
 
     await supabase.from('uploaded_files').insert({
-      original_name: attachment.filename,
+      original_name: displayName,
       mime_type: 'application/pdf',
       size: fileBuffer.length,
       storage_path: storagePath,
@@ -453,13 +485,15 @@ async function processAttachment(attachment, passwords, jobId) {
       detected_source: detectedSource || null,
       pending_transactions: JSON.stringify(valid),
       due_date: dueDate || null,
+      user_id: userId,
     });
 
     await supabase.from('email_sync_results').insert({
       sync_job_id: jobId,
-      filename: attachment.filename,
+      filename: displayName,
       status: 'success',
       transactions_imported: valid.length,
+      user_id: userId,
     });
 
     return { success: true, transactionsImported: valid.length };
@@ -469,6 +503,7 @@ async function processAttachment(attachment, passwords, jobId) {
       filename: attachment.filename,
       status: 'parse_failed',
       error_message: err.message,
+      user_id: userId,
     });
     return { success: false };
   } finally {

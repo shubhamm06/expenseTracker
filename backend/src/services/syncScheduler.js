@@ -101,7 +101,7 @@ async function processSync(accountId, options) {
 }
 
 export function isSyncRunning(accountId) {
-  return activeJobs.has(`statement-${accountId}`) || activeJobs.has(`amazon-${accountId}`);
+  return activeJobs.has(`statement-${accountId}`);
 }
 
 export function isAmazonPaySyncRunning(accountId) {

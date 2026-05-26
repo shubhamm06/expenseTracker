@@ -93,7 +93,7 @@ export default function Transactions() {
     setEditingTransaction(null);
   }
 
-  const isExcluded = t => t.is_reimbursable || t.category_name === 'Payments';
+  const isExcluded = t => t.is_reimbursable || t.category_name === 'Payments' || t.category_name === 'Gift Card';
   const totalDebit = transactions.filter(t => t.type !== 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
   const totalCredit = transactions.filter(t => t.type === 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
   const netAmount = totalDebit - totalCredit;
@@ -501,7 +501,7 @@ export default function Transactions() {
                 {/* Transaction Rows */}
                 <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '480px' }}>
                   {group.map((t, idx) => {
-                    const isPayment = t.category_name === 'Payments';
+                    const isPayment = t.category_name === 'Payments' || t.category_name === 'Gift Card';
                     const isStrikethrough = t.is_reimbursable || isPayment;
                     const rowBg = isStrikethrough
                       ? 'var(--table-row-hover)'
