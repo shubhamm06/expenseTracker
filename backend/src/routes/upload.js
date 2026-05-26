@@ -2,31 +2,45 @@ import { Router } from 'express';
 import multer from 'multer';
 import { parse } from 'csv-parse/sync';
 import { readFileSync, existsSync, unlinkSync } from 'fs';
+import { readFile } from 'fs/promises';
 import { execFileSync } from 'child_process';
 import { supabase } from '../models/supabase.js';
 import { parsePdf, extractTransactionsFromText, extractSourceFromText } from '../services/pdfParser.js';
 
 const router = Router();
 
-function applyRulesAfterImport() {
-  const db = getDatabase();
-  const rules = db.prepare('SELECT * FROM rules').all();
+async function applyRulesAfterImport() {
+  const { data: rules } = await supabase.from('rules').select('*');
+  if (!rules || rules.length === 0) return;
 
-  const uncategorized = db.prepare("SELECT * FROM transactions WHERE category_id IS NULL OR category_source = 'rule'").all();
-  const updateStmt = db.prepare("UPDATE transactions SET category_id = ?, category_source = 'rule' WHERE id = ?");
+  const { data: uncategorized } = await supabase
+    .from('transactions')
+    .select('*')
+    .or('category_id.is.null,category_source.eq.rule');
 
+  if (!uncategorized || uncategorized.length === 0) return;
 
+  const updatesByCategory = {};
   for (const txn of uncategorized) {
     const desc = txn.description.toLowerCase();
     for (const rule of rules) {
       const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
       if (patterns.some(p => desc.includes(p))) {
-        updateStmt.run(rule.category_id, txn.id);
-
+        if (!updatesByCategory[rule.category_id]) updatesByCategory[rule.category_id] = [];
+        updatesByCategory[rule.category_id].push(txn.id);
         break;
       }
     }
   }
+
+  await Promise.all(
+    Object.entries(updatesByCategory).map(([categoryId, ids]) =>
+      supabase
+        .from('transactions')
+        .update({ category_id: categoryId, category_source: 'rule' })
+        .in('id', ids)
+    )
+  );
 }
 
 const upload = multer({ dest: '/tmp/uploads/' });
@@ -80,19 +94,23 @@ async function importTransactions(rows, source) {
   const skipped = [];
 
   const insertCounts = {};
-  for (const [key, batchCount] of Object.entries(groups)) {
-    const [date, description, amountStr, type] = key.split('|');
-    const amount = parseFloat(amountStr);
-
-    const { count } = await supabase
-      .from('transactions')
-      .select('*', { count: 'exact', head: true })
-      .eq('date', date)
-      .eq('description', description)
-      .eq('amount', amount)
-      .eq('type', type);
-
-    const toInsert = Math.max(0, batchCount - (count || 0));
+  const groupEntries = Object.entries(groups);
+  const countResults = await Promise.all(
+    groupEntries.map(([key]) => {
+      const [date, description, amountStr, type] = key.split('|');
+      const amount = parseFloat(amountStr);
+      return supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('date', date)
+        .eq('description', description)
+        .eq('amount', amount)
+        .eq('type', type);
+    })
+  );
+  for (let i = 0; i < groupEntries.length; i++) {
+    const [key, batchCount] = groupEntries[i];
+    const toInsert = Math.max(0, batchCount - (countResults[i].count || 0));
     insertCounts[key] = toInsert;
     duplicates += batchCount - toInsert;
   }
@@ -358,7 +376,7 @@ router.post('/preview', upload.single('file'), async (req, res) => {
     return handlePdfPreview(req, res, fileId);
   }
 
-  const content = readFileSync(req.file.path, 'utf-8');
+  const content = await readFile(req.file.path, 'utf-8');
   const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
 
   if (records.length === 0) return res.status(400).json({ error: 'Empty CSV' });
@@ -478,14 +496,14 @@ router.post('/pdf-import', async (req, res) => {
     await updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
   }
 
-  applyRulesAfterImport();
+  await applyRulesAfterImport();
   res.json({ imported, duplicates, skipped, total });
 });
 
 router.post('/import', async (req, res) => {
   const { file_path, mapping, source, file_id } = req.body;
 
-  const content = readFileSync(file_path, 'utf-8');
+  const content = await readFile(file_path, 'utf-8');
   const records = parse(content, { columns: true, skip_empty_lines: true, trim: true });
 
   const rows = [];
@@ -527,7 +545,7 @@ router.post('/import', async (req, res) => {
     await updateFileStatus(file_id, 'imported', imported, msg, source, skipped);
   }
 
-  applyRulesAfterImport();
+  await applyRulesAfterImport();
   res.json({ imported, duplicates, skipped, total });
 });
 

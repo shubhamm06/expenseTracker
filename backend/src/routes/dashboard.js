@@ -40,19 +40,27 @@ router.get('/top-merchants', async (req, res) => {
   const nextYear = mInt === 12 ? yInt + 1 : yInt;
   const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('description, amount')
-    .eq('type', 'debit')
-    .eq('is_reimbursable', false)
-    .eq('is_voucher_purchase', false)
-    .gte('date', startDate)
-    .lt('date', endDate);
+  const [{ data, error }, { data: excludedCats }] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('description, amount, category_id')
+      .eq('type', 'debit')
+      .eq('is_reimbursable', false)
+      .eq('is_voucher_purchase', false)
+      .gte('date', startDate)
+      .lt('date', endDate),
+    supabase
+      .from('categories')
+      .select('id')
+      .in('name', ['Payments', 'Gift Card']),
+  ]);
 
   if (error) return res.status(500).json({ error: error.message });
+  const excludedIds = new Set((excludedCats || []).map(c => c.id));
 
   const grouped = {};
   for (const t of data || []) {
+    if (excludedIds.has(t.category_id)) continue;
     if (!grouped[t.description]) grouped[t.description] = { total: 0, count: 0 };
     grouped[t.description].total += t.amount;
     grouped[t.description].count++;
@@ -78,21 +86,28 @@ router.get('/source-breakdown', async (req, res) => {
   const nextYear = mInt === 12 ? yInt + 1 : yInt;
   const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('source, type, amount, is_reimbursable')
-    .gte('date', startDate)
-    .lt('date', endDate);
+  const [{ data, error }, { data: excludedCats }] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('source, type, amount, is_reimbursable, category_id')
+      .gte('date', startDate)
+      .lt('date', endDate),
+    supabase
+      .from('categories')
+      .select('id')
+      .in('name', ['Payments', 'Gift Card']),
+  ]);
 
   if (error) return res.status(500).json({ error: error.message });
+  const excludedIds = new Set((excludedCats || []).map(c => c.id));
 
   const grouped = {};
   for (const t of data || []) {
     const src = t.source || null;
     if (!grouped[src]) grouped[src] = { source: src, debit: 0, credit: 0, count: 0 };
     grouped[src].count++;
-    if (t.type === 'debit' && !t.is_reimbursable) grouped[src].debit += t.amount;
-    if (t.type === 'credit' && !t.is_reimbursable) grouped[src].credit += t.amount;
+    if (t.type === 'debit' && !t.is_reimbursable && !excludedIds.has(t.category_id)) grouped[src].debit += t.amount;
+    if (t.type === 'credit' && !t.is_reimbursable && !excludedIds.has(t.category_id)) grouped[src].credit += t.amount;
   }
 
   const sources = Object.values(grouped).sort((a, b) => b.debit - a.debit);

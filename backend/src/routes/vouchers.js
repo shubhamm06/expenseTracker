@@ -189,13 +189,10 @@ router.delete('/usage/:id', async (req, res) => {
 
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  await supabase.from('voucher_usage').delete().eq('id', req.params.id);
-
-  const { data: voucher } = await supabase
-    .from('vouchers')
-    .select('remaining_amount')
-    .eq('id', entry.voucher_id)
-    .single();
+  const [, { data: voucher }] = await Promise.all([
+    supabase.from('voucher_usage').delete().eq('id', req.params.id),
+    supabase.from('vouchers').select('remaining_amount').eq('id', entry.voucher_id).single(),
+  ]);
 
   await supabase
     .from('vouchers')
@@ -206,29 +203,32 @@ router.delete('/usage/:id', async (req, res) => {
 });
 
 router.post('/usage/auto-categorize', async (req, res) => {
-  const { data: rules } = await supabase.from('rules').select('*');
-  const { data: uncategorized } = await supabase
-    .from('voucher_usage')
-    .select('*')
-    .or('category_id.is.null,category_source.eq.rule');
+  const [{ data: rules }, { data: uncategorized }] = await Promise.all([
+    supabase.from('rules').select('*'),
+    supabase.from('voucher_usage').select('*').or('category_id.is.null,category_source.eq.rule'),
+  ]);
 
-  let applied = 0;
+  const updatesByCategory = {};
 
   for (const entry of uncategorized || []) {
     const desc = (entry.description || '').toLowerCase();
     for (const rule of rules || []) {
       const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
       if (patterns.some(p => desc.includes(p))) {
-        await supabase
-          .from('voucher_usage')
-          .update({ category_id: rule.category_id, category_source: 'rule' })
-          .eq('id', entry.id);
-        applied++;
+        if (!updatesByCategory[rule.category_id]) updatesByCategory[rule.category_id] = [];
+        updatesByCategory[rule.category_id].push(entry.id);
         break;
       }
     }
   }
 
+  await Promise.all(
+    Object.entries(updatesByCategory).map(([catId, ids]) =>
+      supabase.from('voucher_usage').update({ category_id: catId, category_source: 'rule' }).in('id', ids)
+    )
+  );
+
+  const applied = Object.values(updatesByCategory).reduce((s, ids) => s + ids.length, 0);
   res.json({ applied });
 });
 

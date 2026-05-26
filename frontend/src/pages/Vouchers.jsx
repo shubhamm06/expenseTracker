@@ -26,14 +26,18 @@ export default function Vouchers() {
   });
 
   useEffect(() => {
-    loadVouchers().then(list => {
+    Promise.all([
+      loadVouchers(),
+      fetch('/api/categories').then(r => r.json()),
+      fetch('/api/settings/sync-schedule').then(r => r.json()),
+    ]).then(([list, cats, schedule]) => {
+      setCategories(cats);
+      setSyncSchedule(schedule);
       if (list && list.length > 0) {
         const amazonPay = list.find(v => v.name === 'Amazon Pay Balance') || list[0];
         selectVoucher(amazonPay);
       }
     });
-    fetch('/api/categories').then(r => r.json()).then(setCategories);
-    fetch('/api/settings/sync-schedule').then(r => r.json()).then(setSyncSchedule);
   }, []);
 
   const [quickAddModal, setQuickAddModal] = useState(null);
@@ -114,8 +118,7 @@ export default function Vouchers() {
     setSelectedVoucher(v);
     setShowTopup(false);
     setShowAddUsage(false);
-    await autoCategorizeUsage();
-    await loadActivity(v.id);
+    await Promise.all([autoCategorizeUsage(), loadActivity(v.id)]);
   }
 
   async function autoCategorizeUsage() {

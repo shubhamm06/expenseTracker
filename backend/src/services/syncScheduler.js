@@ -31,6 +31,9 @@ export function stopScheduler() {
 }
 
 export async function syncAllAccounts() {
+  const { data: cards } = await supabase.from('cards').select('id').limit(1);
+  if (!cards || cards.length === 0) return;
+
   const { data: accounts } = await supabase
     .from('email_accounts')
     .select('*')

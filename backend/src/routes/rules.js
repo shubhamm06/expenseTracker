@@ -63,14 +63,13 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.post('/apply', async (req, res) => {
-  const { data: rules } = await supabase.from('rules').select('*');
+  const [{ data: rules }, { data: eligible }] = await Promise.all([
+    supabase.from('rules').select('*'),
+    supabase.from('transactions').select('*').or('category_id.is.null,category_source.eq.rule'),
+  ]);
 
-  const { data: eligible } = await supabase
-    .from('transactions')
-    .select('*')
-    .or('category_id.is.null,category_source.eq.rule');
-
-  let applied = 0;
+  const updatesByCategory = {};
+  const clearIds = [];
 
   for (const txn of eligible || []) {
     const desc = txn.description.toLowerCase();
@@ -79,25 +78,27 @@ router.post('/apply', async (req, res) => {
       const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
       if (patterns.some(p => desc.includes(p))) {
         if (txn.category_id !== rule.category_id) {
-          await supabase
-            .from('transactions')
-            .update({ category_id: rule.category_id, category_source: 'rule' })
-            .eq('id', txn.id);
-          applied++;
+          if (!updatesByCategory[rule.category_id]) updatesByCategory[rule.category_id] = [];
+          updatesByCategory[rule.category_id].push(txn.id);
         }
         matched = true;
         break;
       }
     }
     if (!matched && txn.category_id !== null && txn.category_source === 'rule') {
-      await supabase
-        .from('transactions')
-        .update({ category_id: null, category_source: null })
-        .eq('id', txn.id);
-      applied++;
+      clearIds.push(txn.id);
     }
   }
 
+  const ops = Object.entries(updatesByCategory).map(([catId, ids]) =>
+    supabase.from('transactions').update({ category_id: catId, category_source: 'rule' }).in('id', ids)
+  );
+  if (clearIds.length > 0) {
+    ops.push(supabase.from('transactions').update({ category_id: null, category_source: null }).in('id', clearIds));
+  }
+  await Promise.all(ops);
+
+  const applied = Object.values(updatesByCategory).reduce((s, ids) => s + ids.length, 0) + clearIds.length;
   res.json({ applied });
 });
 

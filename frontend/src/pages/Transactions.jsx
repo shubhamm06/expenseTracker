@@ -19,8 +19,13 @@ export default function Transactions() {
   });
 
   useEffect(() => {
-    fetch('/api/categories').then(r => r.json()).then(setCategories);
-    fetch('/api/settings/sync-schedule').then(r => r.json()).then(setSyncSchedule);
+    Promise.all([
+      fetch('/api/categories').then(r => r.json()),
+      fetch('/api/settings/sync-schedule').then(r => r.json()),
+    ]).then(([cats, schedule]) => {
+      setCategories(cats);
+      setSyncSchedule(schedule);
+    });
   }, []);
 
   function loadTransactions() {
@@ -255,6 +260,9 @@ export default function Transactions() {
         {reimbursableCount > 0 && (
           <StatPill label="Not Mine" value={reimbursableCount} muted />
         )}
+        <span className="text-xs italic ml-auto" style={{ color: 'var(--text-muted)' }}>
+          * Excludes gift card &amp; payment transactions
+        </span>
       </div>
 
       {/* Statement Sync Schedule */}

@@ -7,6 +7,8 @@ import Upload from './pages/Upload';
 import Rules from './pages/Rules';
 import Vouchers from './pages/Vouchers';
 import Settings from './pages/Settings';
+import { LoadingProvider, LoadingBar } from './components/LoadingBar';
+import { useFetchInterceptor } from './hooks/useFetchInterceptor';
 
 const ThemeContext = createContext();
 
@@ -36,14 +38,17 @@ function ThemeProvider({ children }) {
 function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <AppShell />
-      </BrowserRouter>
+      <LoadingProvider>
+        <BrowserRouter>
+          <AppShell />
+        </BrowserRouter>
+      </LoadingProvider>
     </ThemeProvider>
   );
 }
 
 function AppShell() {
+  useFetchInterceptor();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
@@ -53,6 +58,7 @@ function AppShell() {
 
   return (
     <div className="app-layout">
+      <LoadingBar />
       {sidebarOpen && (
         <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
       )}

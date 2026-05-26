@@ -195,6 +195,10 @@ export function extractTransactionsFromText(text, detectedSource) {
     const result = extractAmexTransactions(text);
     if (result.length > 0) return result;
   }
+  if (source && source.startsWith('ICICI')) {
+    const result = extractIciciTransactions(text);
+    if (result.length > 0) return result;
+  }
 
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
   const transactions = [];
@@ -425,4 +429,115 @@ function extractAmexTransactions(text) {
   }
 
   return transactions;
+}
+
+function extractIciciTransactions(text) {
+  const lines = text.split('\n');
+  const transactions = [];
+
+  // ICICI format: "DD/MM/YYYY<serial><description>" on one line
+  // Amount on next lines, prefixed by reward points (e.g., "2404,803.00" = 240 pts + 4,803.00)
+  // The actual amount is the last valid currency pattern: digits with comma thousands + .XX
+  const txnLinePattern = /^(\d{2}\/\d{2}\/\d{4})(\d{8,15})(.+)/;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const match = line.match(txnLinePattern);
+    if (!match) continue;
+
+    const date = match[1];
+    let description = match[3].trim();
+    let amount = null;
+
+    // Look at next lines for the amount
+    for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+      const nextLine = lines[j].trim();
+      if (!nextLine) continue;
+      if (/^[A-Z]{2}$/.test(nextLine)) continue;
+      if (/^#$/.test(nextLine)) break;
+
+      // Extract the actual amount: last occurrence of comma-separated number with .XX
+      // "2404,803.00" -> we want "4,803.00"; "9197.08" -> we want "197.08" or "9,197.08"
+      // Rule: amount format is [digits,]digits.digits — find the rightmost valid amount
+      amount = extractIciciAmount(nextLine);
+      break;
+    }
+
+    if (!amount) continue;
+
+    const parsedAmount = parseFloat(amount.replace(/,/g, ''));
+    if (parsedAmount < 1.0) continue;
+
+    // Clean description - remove trailing country codes
+    description = description.replace(/\s+(IN|US|SG|GB|AE|HK|AU|JP|NL|DE|FR)\s*$/i, '').trim();
+    description = description.replace(/\s+/g, ' ');
+    if (description.length < 2) continue;
+
+    const isCredit = /\bCR\b/i.test(lines[i]) || (lines[i + 1] && /\bCR\b/i.test(lines[i + 1].trim()));
+
+    transactions.push({
+      date,
+      description,
+      amount: parsedAmount,
+      type: isCredit ? 'credit' : 'debit',
+    });
+  }
+
+  return transactions;
+}
+
+function extractIciciAmount(str) {
+  // ICICI concatenates reward points (integer) + amount on one line
+  // e.g., "2404,803.00" = reward pts "240" + amount "4,803.00"
+  // e.g., "9197.08" = reward pts "9" + amount "197.08"
+  // Key insight: the amount always has .XX at the end, and Indian comma format
+  // means the portion before decimal has groups: NNN or N,NNN or NN,NNN or N,NN,NNN etc.
+  // Strategy: find the .XX, then walk left to find valid amount start
+  const trimmed = str.trim();
+  const dotIdx = trimmed.lastIndexOf('.');
+  if (dotIdx === -1) return null;
+  const decimals = trimmed.substring(dotIdx + 1);
+  if (decimals.length !== 2 || !/^\d{2}$/.test(decimals)) return null;
+
+  // Walk left from dot to find the amount start
+  // Valid amount chars before dot: digits and commas
+  // The first group (rightmost) before dot is always 3 digits
+  // Then subsequent groups are 2 digits each (Indian format)
+  const beforeDot = trimmed.substring(0, dotIdx);
+  let amountStart = beforeDot.length;
+
+  // Must end with 3 digits
+  if (beforeDot.length < 1) return null;
+
+  let pos = beforeDot.length - 1;
+  // Collect rightmost 3 digits (or 1-3 if that's all there is)
+  let digitCount = 0;
+  while (pos >= 0 && /\d/.test(beforeDot[pos])) {
+    digitCount++;
+    pos--;
+    if (digitCount === 3) break;
+  }
+  if (digitCount === 0) return null;
+
+  // Now check for comma-separated groups of 2
+  while (pos >= 0 && beforeDot[pos] === ',') {
+    pos--;
+    // Expect exactly 2 digits
+    let groupDigits = 0;
+    while (pos >= 0 && /\d/.test(beforeDot[pos])) {
+      groupDigits++;
+      pos--;
+      if (groupDigits === 2) break;
+    }
+    if (groupDigits !== 2) {
+      // Invalid group, stop here
+      pos += groupDigits + 1; // back up past the comma
+      break;
+    }
+  }
+
+  amountStart = pos + 1;
+  const amount = trimmed.substring(amountStart, dotIdx + 3);
+  if (!amount || !/^\d/.test(amount)) return null;
+  return amount;
 }

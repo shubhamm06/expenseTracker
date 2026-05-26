@@ -216,19 +216,28 @@ export default function Rules() {
             >
               <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
               <span style={{ color: 'var(--text-primary)' }}>{cat.name}</span>
-              <button
-                onClick={() => deleteCategory(cat.id)}
-                className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{ color: 'var(--danger)' }}
-                title="Delete category"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+              {cat.protected ? (
+                <svg className="ml-1 w-3.5 h-3.5 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} title="System category — cannot be deleted">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
                 </svg>
-              </button>
+              ) : (
+                <button
+                  onClick={() => deleteCategory(cat.id)}
+                  className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ color: 'var(--danger)' }}
+                  title="Delete category"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
             </span>
           ))}
         </div>
+        <p className="text-xs mt-2" style={{ color: 'var(--text-secondary)' }}>
+          Categories with a lock icon are system categories and cannot be deleted.
+        </p>
       </div>
 
       {/* Rules List */}

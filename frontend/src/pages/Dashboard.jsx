@@ -21,11 +21,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     const params = `month=${month}&year=${year}`;
-    fetch(`/api/dashboard/summary?${params}`).then(r => r.json()).then(setSummary);
-    fetch('/api/dashboard/monthly-comparison').then(r => r.json()).then(setComparison);
-    fetch(`/api/dashboard/top-merchants?${params}`).then(r => r.json()).then(setTopMerchants);
-    fetch(`/api/dashboard/source-breakdown?${params}`).then(r => r.json()).then(setSourceBreakdown);
-    fetch('/api/settings/sync-schedule').then(r => r.json()).then(setSyncSchedule);
+    Promise.all([
+      fetch(`/api/dashboard/summary?${params}`).then(r => r.json()),
+      fetch('/api/dashboard/monthly-comparison').then(r => r.json()),
+      fetch(`/api/dashboard/top-merchants?${params}`).then(r => r.json()),
+      fetch(`/api/dashboard/source-breakdown?${params}`).then(r => r.json()),
+      fetch('/api/settings/sync-schedule').then(r => r.json()),
+    ]).then(([s, c, m, b, sc]) => {
+      setSummary(s);
+      setComparison(c);
+      setTopMerchants(m);
+      setSourceBreakdown(b);
+      setSyncSchedule(sc);
+    });
   }, [month, year]);
 
   if (!summary) {
@@ -105,7 +113,9 @@ export default function Dashboard() {
         <KPICard label="Not Mine" value={summary.reimbursable_total} color="var(--amber)" />
       </motion.div>
 
-
+      <motion.p variants={item} className="text-xs italic -mt-2" style={{ color: 'var(--text-muted)' }}>
+        * Excludes gift card &amp; payment transactions
+      </motion.p>
 
       {/* Row: Source Breakdown + Net Spend Ring */}
       <motion.div variants={item} className="grid grid-cols-1 lg:grid-cols-3 gap-4">

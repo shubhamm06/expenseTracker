@@ -51,31 +51,57 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
       sinceDate.setMonth(sinceDate.getMonth() - 2);
     }
 
-    const { data: passwords } = await supabase.from('pdf_passwords').select('*');
+    const { data: cards } = await supabase.from('cards').select('*');
+    const { data: profile } = await supabase.from('user_profile').select('*').limit(1).single();
+    const { generatePasswords } = await import('./passwordGenerator.js');
+    const passwords = generatePasswords(cards || [], profile || {});
+    // For manual syncs with explicit period, skip files already processed
+    let alreadySyncedFiles = new Set();
+    if (sinceDays) {
+      const { data: existingFiles } = await supabase
+        .from('uploaded_files')
+        .select('original_name')
+        .eq('source_type', 'email')
+        .in('status', ['pending', 'imported']);
+      if (existingFiles) {
+        alreadySyncedFiles = new Set(existingFiles.map(f => f.original_name));
+      }
+    }
+
     let totalFound = 0;
     let totalImported = 0;
     let processed = 0;
     let failed = 0;
 
+    let lastProgressUpdate = 0;
     await fetchAndProcessAttachments(account, sinceDate, async (attachment) => {
+      if (alreadySyncedFiles.has(attachment.filename)) return;
       totalFound++;
-      await supabase
-        .from('email_sync_jobs')
-        .update({ total_attachments: totalFound })
-        .eq('id', jobId);
 
       const result = await processAttachment(attachment, passwords || [], jobId);
       processed++;
       if (result.success) {
-        totalImported += result.transactionsImported;
+        totalImported++;
       } else {
         failed++;
       }
-      await supabase
-        .from('email_sync_jobs')
-        .update({ processed_attachments: processed, imported_transactions: totalImported, failed_attachments: failed })
-        .eq('id', jobId);
+
+      // Batch progress updates - every 3 attachments or when done
+      if (processed - lastProgressUpdate >= 3) {
+        lastProgressUpdate = processed;
+        supabase
+          .from('email_sync_jobs')
+          .update({ total_attachments: totalFound, processed_attachments: processed, imported_transactions: totalImported, failed_attachments: failed })
+          .eq('id', jobId)
+          .then(() => {});
+      }
     });
+
+    // Final progress update
+    await supabase
+      .from('email_sync_jobs')
+      .update({ total_attachments: totalFound, processed_attachments: processed, imported_transactions: totalImported, failed_attachments: failed })
+      .eq('id', jobId);
 
     await supabase
       .from('email_sync_jobs')
@@ -140,22 +166,15 @@ async function getImapAuth(account) {
 const STATEMENT_KEYWORDS = [
   'credit card statement',
   'card statement',
-  'account statement',
-  'e-statement',
-  'estatement',
-  'e statement',
-  'monthly statement',
-  'billing statement',
-  'credit card bill',
   'card bill',
-  'statement of account',
-  'statement for',
-  'your statement',
-  'new statement',
-  'statement ready',
-  'statement available',
-  'statement generated',
-  'statement is ready',
+  'credit card bill',
+  'card e-statement',
+  'card estatement',
+];
+
+// Subject must contain "card" to qualify as a credit card statement email
+const SUBJECT_REQUIRED_KEYWORDS = [
+  'card',
 ];
 
 const EXCLUDE_SUBJECT_KEYWORDS = [
@@ -240,14 +259,28 @@ const EXCLUDE_FILENAME_PATTERNS = [
   /terms.*conditions/i,
   /^GH\d{8,}/i,
   /\d+-\d*CF-/i,
+  // Bank statements (not credit card)
+  /Email_Bank_Statement/i,
+  /Bank_Statement/i,
+  /^\w+_\w+_\d{8}_\d+\.pdf$/i,  // Pattern: Name_Name_DDMMYYYY_Number.pdf (bank statements)
+  // CAMS statements
+  /_TXN\.pdf$/i,
+  /^[A-Z]{3}\d{4}_[A-Z]{2}\d+_TXN/i,  // APR2026_AA06545515_TXN pattern
+  /CAMS/i,
 ];
 
 function isLikelyStatement(subject, filename) {
   const subjectLower = (subject || '').toLowerCase();
   const filenameLower = (filename || '').toLowerCase();
-  const combined = `${subjectLower} ${filenameLower}`;
 
+  // Must have "card" somewhere in the subject
+  if (!SUBJECT_REQUIRED_KEYWORDS.some(kw => subjectLower.includes(kw))) return false;
+
+  // Must match at least one statement keyword in subject or filename
+  const combined = `${subjectLower} ${filenameLower}`;
   if (!STATEMENT_KEYWORDS.some(keyword => combined.includes(keyword))) return false;
+
+  // Exclusions
   if (EXCLUDE_SUBJECT_KEYWORDS.some(keyword => subjectLower.includes(keyword))) return false;
   if (EXCLUDE_FILENAME_PATTERNS.some(pattern => pattern.test(filenameLower))) return false;
   return true;
@@ -278,7 +311,10 @@ const CONTENT_EXCLUDE_PATTERNS = [
 
 function isExcludedContent(text) {
   const snippet = text.substring(0, 3000).toLowerCase();
-  return CONTENT_EXCLUDE_PATTERNS.some(pattern => pattern.test(snippet));
+  if (CONTENT_EXCLUDE_PATTERNS.some(pattern => pattern.test(snippet))) return true;
+  // Must contain "credit card" somewhere in the document to confirm it's a card statement
+  if (!snippet.includes('credit card') && !snippet.includes('card number') && !snippet.includes('card no')) return true;
+  return false;
 }
 
 async function fetchAndProcessAttachments(account, sinceDate, onAttachment) {

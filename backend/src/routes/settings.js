@@ -20,6 +20,11 @@ function detectImapSettings(email) {
   return IMAP_PROVIDERS[domain] || null;
 }
 
+async function hasCards() {
+  const { data } = await supabase.from('cards').select('id').limit(1);
+  return data && data.length > 0;
+}
+
 function getOAuth2Client() {
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -81,7 +86,9 @@ router.get('/oauth/google/callback', async (req, res) => {
           error_message: null,
         })
         .eq('id', existing.id);
-      triggerSync(existing.id, { triggerType: 'auto' });
+      if (await hasCards()) {
+        triggerSync(existing.id, { triggerType: 'auto' });
+      }
     } else {
       const { data: newAccount } = await supabase
         .from('email_accounts')
@@ -97,7 +104,9 @@ router.get('/oauth/google/callback', async (req, res) => {
         })
         .select('id')
         .single();
-      triggerSync(newAccount.id, { triggerType: 'auto' });
+      if (await hasCards()) {
+        triggerSync(newAccount.id, { triggerType: 'auto' });
+      }
     }
 
     res.redirect('http://localhost:5173/settings?success=connected&email=' + encodeURIComponent(email));
@@ -163,7 +172,10 @@ router.post('/email-accounts', async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 
-  triggerSync(data.id, { triggerType: 'auto' });
+  const shouldSync = await hasCards();
+  if (shouldSync) {
+    triggerSync(data.id, { triggerType: 'auto' });
+  }
 
   res.json({
     id: data.id,
@@ -171,7 +183,7 @@ router.post('/email-accounts', async (req, res) => {
     imap_host: host,
     imap_port: port,
     status: 'connected',
-    sync_started: true,
+    sync_started: shouldSync,
   });
 });
 
@@ -194,8 +206,10 @@ router.delete('/email-accounts/:id', async (req, res) => {
     await supabase.from('email_sync_results').delete().in('sync_job_id', jobIds);
   }
 
-  await supabase.from('email_sync_jobs').delete().eq('email_account_id', req.params.id);
-  await supabase.from('email_accounts').delete().eq('id', req.params.id);
+  await Promise.all([
+    supabase.from('email_sync_jobs').delete().eq('email_account_id', req.params.id),
+    supabase.from('email_accounts').delete().eq('id', req.params.id),
+  ]);
 
   res.json({ success: true });
 });
@@ -214,6 +228,10 @@ router.post('/email-accounts/:id/sync', async (req, res) => {
   const period = req.body?.period || null;
   const sinceDays = periodMap[period] || undefined;
 
+  if (!(await hasCards())) {
+    return res.status(400).json({ error: 'Please add at least one card before syncing statements.' });
+  }
+
   const result = triggerSync(accountId, { sinceDays, syncPeriod: period });
   if (result.alreadyRunning) {
     return res.json({ message: 'Sync already in progress' });
@@ -221,70 +239,105 @@ router.post('/email-accounts/:id/sync', async (req, res) => {
   res.json({ message: 'Sync started' });
 });
 
-// --- PDF Passwords ---
+// --- Cards ---
 
-router.get('/passwords', async (req, res) => {
+router.get('/cards', async (req, res) => {
   const { data, error } = await supabase
-    .from('pdf_passwords')
-    .select('id, label, password, source_match, created_at')
+    .from('cards')
+    .select('*')
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-router.post('/passwords', async (req, res) => {
-  const { label, password, source_match } = req.body;
-  if (!label || !password) {
-    return res.status(400).json({ error: 'label and password are required' });
+router.post('/cards', async (req, res) => {
+  const { bank, card_number } = req.body;
+  if (!bank || !card_number) {
+    return res.status(400).json({ error: 'bank and card_number are required' });
+  }
+  if (card_number.replace(/\s/g, '').length !== 16) {
+    return res.status(400).json({ error: 'Card number must be 16 digits' });
   }
 
   const { data, error } = await supabase
-    .from('pdf_passwords')
-    .insert({ label, password, source_match: source_match || null })
-    .select('id, label, password, source_match')
+    .from('cards')
+    .insert({ bank, card_number: card_number.replace(/\s/g, '') })
+    .select('*')
     .single();
 
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-router.patch('/passwords/:id', async (req, res) => {
-  const { label, password, source_match } = req.body;
-
-  const { data: existing } = await supabase
-    .from('pdf_passwords')
-    .select('id')
-    .eq('id', req.params.id)
-    .single();
-
-  if (!existing) return res.status(404).json({ error: 'Password not found' });
+router.patch('/cards/:id', async (req, res) => {
+  const { bank, card_number } = req.body;
 
   const updates = {};
-  if (label !== undefined) updates.label = label;
-  if (password !== undefined) updates.password = password;
-  if (source_match !== undefined) updates.source_match = source_match || null;
+  if (bank !== undefined) updates.bank = bank;
+  if (card_number !== undefined) updates.card_number = card_number.replace(/\s/g, '');
 
-  await supabase.from('pdf_passwords').update(updates).eq('id', req.params.id);
+  const { error } = await supabase.from('cards').update(updates).eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
 
-  const { data: updated } = await supabase
-    .from('pdf_passwords')
-    .select('id, label, password, source_match, created_at')
-    .eq('id', req.params.id)
-    .single();
-
-  res.json(updated);
+  const { data } = await supabase.from('cards').select('*').eq('id', req.params.id).single();
+  res.json(data);
 });
 
-router.delete('/passwords/:id', async (req, res) => {
+router.delete('/cards/:id', async (req, res) => {
   const { data } = await supabase
-    .from('pdf_passwords')
+    .from('cards')
     .delete()
     .eq('id', req.params.id)
     .select('id');
 
-  if (!data || data.length === 0) return res.status(404).json({ error: 'Password not found' });
+  if (!data || data.length === 0) return res.status(404).json({ error: 'Card not found' });
   res.json({ success: true });
+});
+
+// --- User Profile ---
+
+router.get('/profile', async (req, res) => {
+  const { data, error } = await supabase
+    .from('user_profile')
+    .select('*')
+    .limit(1)
+    .single();
+
+  if (error && error.code !== 'PGRST116') return res.status(500).json({ error: error.message });
+  res.json(data || { name: '', dob: '', pan: '' });
+});
+
+router.put('/profile', async (req, res) => {
+  const { name, dob, pan } = req.body;
+
+  const { data: existing } = await supabase
+    .from('user_profile')
+    .select('id')
+    .limit(1)
+    .single();
+
+  let result;
+  if (existing) {
+    const { data, error } = await supabase
+      .from('user_profile')
+      .update({ name: name || '', dob: dob || '', pan: pan || '' })
+      .eq('id', existing.id)
+      .select('*')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    result = data;
+  } else {
+    const { data, error } = await supabase
+      .from('user_profile')
+      .insert({ name: name || '', dob: dob || '', pan: pan || '' })
+      .select('*')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    result = data;
+  }
+
+  res.json(result);
 });
 
 // --- Sync Jobs ---

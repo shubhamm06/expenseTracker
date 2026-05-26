@@ -3,13 +3,15 @@ import Modal from '../components/Modal';
 
 export default function Settings() {
   const [accounts, setAccounts] = useState([]);
-  const [passwords, setPasswords] = useState([]);
+  const [cards, setCards] = useState([]);
+  const [profile, setProfile] = useState({ name: '', dob: '', pan: '' });
   const [syncJobs, setSyncJobs] = useState([]);
   const [showAddEmail, setShowAddEmail] = useState(false);
-  const [showAddPassword, setShowAddPassword] = useState(false);
+  const [showAddCard, setShowAddCard] = useState(false);
   const [loading, setLoading] = useState(true);
   const [confirmModal, setConfirmModal] = useState(null);
-  const [showPasswords, setShowPasswords] = useState(false);
+  const [pendingReviewCount, setPendingReviewCount] = useState(0);
+  
   const [syncSchedule, setSyncSchedule] = useState(null);
 
   const [oauthMessage, setOauthMessage] = useState(null);
@@ -25,7 +27,7 @@ export default function Settings() {
       window.history.replaceState({}, '', '/settings');
     }
 
-    Promise.all([fetchAccounts(), fetchPasswords(), fetchSyncJobs(), fetchSyncSchedule()])
+    Promise.all([fetchAccounts(), fetchCards(), fetchProfile(), fetchSyncJobs(), fetchSyncSchedule(), fetchPendingReviewCount()])
       .finally(() => setLoading(false));
   }, []);
 
@@ -37,6 +39,7 @@ export default function Settings() {
     const interval = setInterval(() => {
       fetchSyncJobs();
       fetchAccounts();
+      fetchPendingReviewCount();
     }, 5000);
 
     return () => clearInterval(interval);
@@ -47,14 +50,36 @@ export default function Settings() {
     if (res.ok) setAccounts(await res.json());
   }
 
-  async function fetchPasswords() {
-    const res = await fetch('/api/settings/passwords');
-    if (res.ok) setPasswords(await res.json());
+  async function fetchCards() {
+    const res = await fetch('/api/settings/cards');
+    if (res.ok) setCards(await res.json());
+  }
+
+  async function fetchProfile() {
+    const res = await fetch('/api/settings/profile');
+    if (res.ok) setProfile(await res.json());
+  }
+
+  async function saveProfile(updated) {
+    const res = await fetch('/api/settings/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated),
+    });
+    if (res.ok) setProfile(await res.json());
   }
 
   async function fetchSyncJobs() {
     const res = await fetch('/api/settings/sync-jobs');
     if (res.ok) setSyncJobs(await res.json());
+  }
+
+  async function fetchPendingReviewCount() {
+    const res = await fetch('/api/upload/files?status=pending');
+    if (res.ok) {
+      const files = await res.json();
+      setPendingReviewCount(files.filter(f => f.source_type === 'email').length);
+    }
   }
 
   async function fetchSyncSchedule() {
@@ -81,6 +106,15 @@ export default function Settings() {
   }
 
   async function triggerSync(id, period) {
+    if (cards.length === 0) {
+      setConfirmModal({
+        title: 'Card Details Required',
+        message: 'Please add at least one card before syncing statements. Card details are used to generate passwords for unlocking encrypted PDF statements.',
+        confirmLabel: 'Add Card',
+        onConfirm: () => { setConfirmModal(null); setShowAddCard(true); },
+      });
+      return;
+    }
     await fetch(`/api/settings/email-accounts/${id}/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -90,31 +124,19 @@ export default function Settings() {
     fetchSyncJobs();
   }
 
-  function deletePassword(id) {
-    const pw = passwords.find(p => p.id === id);
+  function deleteCard(id) {
+    const card = cards.find(c => c.id === id);
     setConfirmModal({
-      title: 'Delete Password',
-      message: `Are you sure you want to delete the password "${pw?.label || ''}"? Future syncs won't be able to use it to unlock statements.`,
-      confirmLabel: 'Delete',
+      title: 'Remove Card',
+      message: `Remove ${card?.bank || ''} card ending in ${card?.card_number?.slice(-4) || '****'}?`,
+      confirmLabel: 'Remove',
       danger: true,
       onConfirm: async () => {
-        const res = await fetch(`/api/settings/passwords/${id}`, { method: 'DELETE' });
-        if (res.ok) setPasswords(p => p.filter(x => x.id !== id));
+        const res = await fetch(`/api/settings/cards/${id}`, { method: 'DELETE' });
+        if (res.ok) setCards(c => c.filter(x => x.id !== id));
         setConfirmModal(null);
       },
     });
-  }
-
-  async function updatePassword(id, field, value) {
-    const res = await fetch(`/api/settings/passwords/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ [field]: value }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setPasswords(p => p.map(x => x.id === id ? updated : x));
-    }
   }
 
   if (loading) {
@@ -129,7 +151,7 @@ export default function Settings() {
     <div className="space-y-8 animate-fade-in-up">
       <div>
         <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>Settings</h1>
-        <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>Connect email accounts and manage statement passwords</p>
+        <p className="text-sm mt-0.5" style={{ color: 'var(--text-muted)' }}>Connect email accounts, cards, and profile for auto-unlock</p>
       </div>
 
       {oauthMessage && (
@@ -239,61 +261,69 @@ export default function Settings() {
         )}
       </section>
 
-      {/* PDF Passwords Section */}
+      {/* User Profile Section */}
       <section>
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Statement Passwords</h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              Passwords for encrypted PDF statements (e.g., DOB, PAN)
+        <div className="mb-3">
+          <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Your Profile</h2>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            Used to generate passwords for unlocking encrypted statements
+          </p>
+        </div>
+        <ProfileSection profile={profile} onSave={saveProfile} />
+      </section>
+
+      {/* Cards Section */}
+      <section>
+        {cards.length === 0 && accounts.length > 0 && (
+          <div className="flex items-center gap-2 px-4 py-3 mb-3 rounded-lg" style={{ background: 'var(--amber-soft)', border: '1px solid var(--border)' }}>
+            <svg className="w-4 h-4 shrink-0" style={{ color: 'var(--amber)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+            </svg>
+            <p className="text-sm italic" style={{ color: 'var(--amber)' }}>
+              Add at least one card to enable statement sync. Card details are needed to unlock encrypted PDF statements.
             </p>
           </div>
-          <div className="flex items-center gap-1">
-            <button onClick={() => setShowAddPassword(true)} className="btn-primary text-sm" title="Save a password to auto-unlock encrypted PDF statements">
-              + Add Password
-            </button>
-            {passwords.length > 0 && (
-              <button
-                onClick={() => setShowPasswords(v => !v)}
-                className="p-1.5 rounded-lg hover:bg-[var(--surface)] transition-colors"
-                title={showPasswords ? 'Hide passwords' : 'Show passwords'}
-              >
-                <svg className="w-5 h-5" style={{ color: showPasswords ? 'var(--accent)' : 'var(--text-muted)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  {showPasswords ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12c1.292 4.338 5.31 7.5 10.066 7.5.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
-                  ) : (
-                    <>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                    </>
-                  )}
-                </svg>
-              </button>
-            )}
+        )}
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Cards</h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              Add your credit/debit cards to auto-unlock PDF statements
+            </p>
           </div>
+          <button onClick={() => setShowAddCard(true)} className="btn-primary text-sm">
+            + Add Card
+          </button>
         </div>
 
-        {passwords.length === 0 ? (
+        {cards.length === 0 ? (
           <div className="card p-8 text-center">
             <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'var(--empty-icon-bg)' }}>
               <svg className="w-7 h-7" style={{ color: 'var(--empty-icon-color)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Z" />
               </svg>
             </div>
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No passwords saved yet</p>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Add passwords to auto-unlock fetched PDF statements</p>
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No cards added yet</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>Add your card details to auto-unlock statement PDFs</p>
           </div>
         ) : (
           <div className="card">
-            <div className="divide-y overflow-y-auto" style={{ borderColor: 'var(--border)', maxHeight: '300px' }}>
-              {passwords.map(p => (
-                <PasswordRow
-                  key={p.id}
-                  pw={p}
-                  visible={showPasswords}
-                  onUpdate={updatePassword}
-                  onDelete={deletePassword}
-                />
+            <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
+              {cards.map(c => (
+                <div key={c.id} className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{c.bank}</span>
+                    <span className="text-sm ml-3" style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                      •••• •••• •••• {c.card_number.slice(-4)}
+                    </span>
+                  </div>
+                  <button onClick={() => deleteCard(c.id)}
+                    className="p-1.5 rounded-lg hover:bg-[var(--surface)] transition-colors" title="Remove card">
+                    <svg className="w-4 h-4" style={{ color: 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                    </svg>
+                  </button>
+                </div>
               ))}
             </div>
           </div>
@@ -301,6 +331,16 @@ export default function Settings() {
       </section>
 
       {/* Sync History */}
+      {pendingReviewCount > 0 && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg" style={{ background: 'var(--amber-soft)', border: '1px solid var(--border)' }}>
+          <svg className="w-4 h-4 shrink-0" style={{ color: 'var(--amber)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+          </svg>
+          <p className="text-sm italic" style={{ color: 'var(--amber)' }}>
+            {pendingReviewCount} file{pendingReviewCount > 1 ? 's' : ''} pending review — please review and import or skip them in the <a href="/upload" className="underline font-medium">Upload</a> section.
+          </p>
+        </div>
+      )}
       {syncJobs.length > 0 && (
         <SyncHistorySection syncJobs={syncJobs} />
       )}
@@ -313,11 +353,11 @@ export default function Settings() {
         />
       )}
 
-      {/* Add Password Modal */}
-      {showAddPassword && (
-        <AddPasswordModal
-          onClose={() => setShowAddPassword(false)}
-          onAdded={() => { fetchPasswords(); setShowAddPassword(false); }}
+      {/* Add Card Modal */}
+      {showAddCard && (
+        <AddCardModal
+          onClose={() => setShowAddCard(false)}
+          onAdded={() => { fetchCards(); setShowAddCard(false); }}
         />
       )}
 
@@ -445,11 +485,11 @@ function SyncHistorySection({ syncJobs }) {
         return (
           <div className="flex justify-center">
             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded" style={{
-              background: j.trigger_type === 'cron' ? 'var(--surface)' : 'var(--accent-soft)',
-              color: j.trigger_type === 'cron' ? 'var(--text-muted)' : 'var(--accent)',
+              background: j.trigger_type === 'manual' ? 'var(--accent-soft)' : 'var(--surface)',
+              color: j.trigger_type === 'manual' ? 'var(--accent)' : 'var(--text-muted)',
               border: '1px solid var(--border)',
             }}>
-              {j.trigger_type === 'cron' ? 'AUTO' : 'MANUAL'}
+              {j.trigger_type === 'manual' ? 'MANUAL' : 'AUTO'}
             </span>
           </div>
         );
@@ -815,24 +855,32 @@ function AddEmailModal({ onClose, onAdded }) {
   );
 }
 
-function AddPasswordModal({ onClose, onAdded }) {
-  const [label, setLabel] = useState('');
-  const [password, setPassword] = useState('');
-  const [sourceMatch, setSourceMatch] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+function AddCardModal({ onClose, onAdded }) {
+  const [bank, setBank] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  function formatCardInput(value) {
+    const digits = value.replace(/\D/g, '').slice(0, 16);
+    return digits.replace(/(\d{4})(?=\d)/g, '$1 ');
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    const digits = cardNumber.replace(/\s/g, '');
+    if (digits.length !== 16) {
+      setError('Card number must be 16 digits');
+      return;
+    }
     setLoading(true);
 
     try {
-      const res = await fetch('/api/settings/passwords', {
+      const res = await fetch('/api/settings/cards', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label, password, source_match: sourceMatch || null }),
+        body: JSON.stringify({ bank, card_number: digits }),
       });
       const data = await res.json();
 
@@ -855,10 +903,9 @@ function AddPasswordModal({ onClose, onAdded }) {
         </svg>
       </button>
 
-      <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Add Statement Password</h2>
+      <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Add Card</h2>
       <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-        This password will be used to unlock PDF statements fetched via email.
-        Map it to a source (bank name + last 4 digits) for priority matching.
+        Card details are used to generate passwords for unlocking PDF statements.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-5 space-y-4">
@@ -869,12 +916,12 @@ function AddPasswordModal({ onClose, onAdded }) {
         )}
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Label</label>
+          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Bank Name</label>
           <input
             type="text"
-            value={label}
-            onChange={e => setLabel(e.target.value)}
-            placeholder="e.g., My DOB, PAN Number"
+            value={bank}
+            onChange={e => setBank(e.target.value)}
+            placeholder="e.g., HDFC, ICICI, SBI, Axis"
             required
             autoFocus
             className="input-field"
@@ -882,56 +929,23 @@ function AddPasswordModal({ onClose, onAdded }) {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Password</label>
-          <div className="relative">
-            <input
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              placeholder="e.g., 01011990 or ABCDE1234F"
-              required
-              className="input-field pr-10"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(v => !v)}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-[var(--surface)] transition-colors"
-              tabIndex={-1}
-            >
-              <svg className="w-4 h-4" style={{ color: 'var(--text-muted)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                {showPassword ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12c1.292 4.338 5.31 7.5 10.066 7.5.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
-                ) : (
-                  <>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                  </>
-                )}
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>
-            Source Match <span className="normal-case font-normal">(optional)</span>
-          </label>
+          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Card Number (16 digits)</label>
           <input
             type="text"
-            value={sourceMatch}
-            onChange={e => setSourceMatch(e.target.value)}
-            placeholder="e.g., HDFC-4321, ICICI, SBI-9876"
+            value={cardNumber}
+            onChange={e => setCardNumber(formatCardInput(e.target.value))}
+            placeholder="1234 5678 9012 3456"
+            required
             className="input-field"
+            style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.05em' }}
+            maxLength={19}
           />
-          <p className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-            Bank name + last 4 digits of card. If matched, this password is tried first.
-          </p>
         </div>
 
         <div className="flex gap-2 pt-2">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1" title="Cancel without saving">Cancel</button>
-          <button type="submit" disabled={loading} className="btn-primary flex-1 justify-center" title="Save this password for auto-unlocking PDF statements">
-            {loading ? 'Saving...' : 'Save Password'}
+          <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+          <button type="submit" disabled={loading} className="btn-primary flex-1 justify-center">
+            {loading ? 'Saving...' : 'Add Card'}
           </button>
         </div>
       </form>
@@ -939,58 +953,71 @@ function AddPasswordModal({ onClose, onAdded }) {
   );
 }
 
-function PasswordRow({ pw, visible, onUpdate, onDelete }) {
-  const [label, setLabel] = useState(pw.label);
-  const [password, setPassword] = useState(pw.password || '');
-  const [sourceMatch, setSourceMatch] = useState(pw.source_match || '');
+function ProfileSection({ profile, onSave }) {
+  const [name, setName] = useState(profile.name || '');
+  const [dob, setDob] = useState(profile.dob || '');
+  const [pan, setPan] = useState(profile.pan || '');
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setLabel(pw.label);
-    setPassword(pw.password || '');
-    setSourceMatch(pw.source_match || '');
-  }, [pw.id, pw.label, pw.password, pw.source_match]);
+    setName(profile.name || '');
+    setDob(profile.dob || '');
+    setPan(profile.pan || '');
+  }, [profile]);
 
-  function handleBlur(field, value, original) {
-    if (value !== original) {
-      onUpdate(pw.id, field, value);
-    }
+  function handleSave() {
+    onSave({ name, dob, pan });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
 
+  const hasChanges = name !== (profile.name || '') || dob !== (profile.dob || '') || pan !== (profile.pan || '');
+
   return (
-    <div className="px-4 py-3 flex items-center gap-3">
-      <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <input
-          type="text"
-          value={label}
-          onChange={e => setLabel(e.target.value)}
-          onBlur={() => handleBlur('label', label, pw.label)}
-          className="input-field text-sm"
-          placeholder="Label"
-        />
-        <input
-          type={visible ? 'text' : 'password'}
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onBlur={() => handleBlur('password', password, pw.password)}
-          className="input-field text-sm"
-          placeholder="Password"
-          style={{ fontFamily: visible ? 'inherit' : 'var(--font-mono)' }}
-        />
-        <input
-          type="text"
-          value={sourceMatch}
-          onChange={e => setSourceMatch(e.target.value)}
-          onBlur={() => handleBlur('source_match', sourceMatch, pw.source_match || '')}
-          className="input-field text-sm"
-          placeholder="Source match (e.g., HDFC-4321)"
-        />
+    <div className="card p-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Name</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Your full name"
+            className="input-field"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>Date of Birth</label>
+          <input
+            type="date"
+            value={dob}
+            onChange={e => setDob(e.target.value)}
+            className="input-field"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>PAN Number</label>
+          <input
+            type="text"
+            value={pan}
+            onChange={e => setPan(e.target.value.toUpperCase())}
+            placeholder="ABCDE1234F"
+            maxLength={10}
+            className="input-field"
+            style={{ fontFamily: 'var(--font-mono)' }}
+          />
+        </div>
       </div>
-      <button onClick={() => onDelete(pw.id)}
-        className="p-1.5 rounded-lg hover:bg-[var(--surface)] transition-colors shrink-0" title="Delete">
-        <svg className="w-4 h-4" style={{ color: 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-        </svg>
-      </button>
+      {hasChanges && (
+        <div className="flex justify-end mt-4">
+          <button onClick={handleSave} className="btn-primary text-sm">
+            Save Profile
+          </button>
+        </div>
+      )}
+      {saved && (
+        <p className="text-xs mt-2 text-right" style={{ color: 'var(--success)' }}>Profile saved</p>
+      )}
     </div>
   );
 }

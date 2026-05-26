@@ -230,6 +230,7 @@ BEGIN
   WHERE type = 'debit'
     AND is_reimbursable = FALSE
     AND is_voucher_purchase = FALSE
+    AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
     AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year;
 
@@ -237,6 +238,7 @@ BEGIN
   FROM transactions
   WHERE type = 'credit'
     AND is_reimbursable = FALSE
+    AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
     AND to_char(date::date, 'MM') = p_month
     AND to_char(date::date, 'YYYY') = p_year;
 
@@ -267,6 +269,7 @@ BEGIN
       WHERE t.type = 'debit'
         AND t.is_reimbursable = FALSE
         AND t.is_voucher_purchase = FALSE
+        AND (t.category_id IS NULL OR c.name NOT IN ('Payments', 'Gift Card'))
         AND to_char(t.date::date, 'MM') = p_month
         AND to_char(t.date::date, 'YYYY') = p_year
       GROUP BY c.name, c.color
@@ -313,6 +316,7 @@ BEGIN
         WHERE type = 'debit'
           AND is_reimbursable = FALSE
           AND is_voucher_purchase = FALSE
+          AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
           AND to_char(date::date, 'MM') = to_char(d, 'MM')
           AND to_char(date::date, 'YYYY') = to_char(d, 'YYYY')
       ) + (
@@ -332,6 +336,7 @@ BEGIN
         FROM transactions
         WHERE type = 'credit'
           AND is_reimbursable = FALSE
+          AND (category_id IS NULL OR category_id NOT IN (SELECT id FROM categories WHERE name IN ('Payments', 'Gift Card')))
           AND to_char(date::date, 'MM') = to_char(d, 'MM')
           AND to_char(date::date, 'YYYY') = to_char(d, 'YYYY')
       ) as credit,
@@ -346,3 +351,26 @@ BEGIN
   RETURN v_results;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Cards (replaces pdf_passwords)
+CREATE TABLE IF NOT EXISTS cards (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  bank TEXT NOT NULL,
+  card_number TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
+);
+
+ALTER TABLE cards ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "service_role_all" ON cards FOR ALL USING (true) WITH CHECK (true);
+
+-- User Profile
+CREATE TABLE IF NOT EXISTS user_profile (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name TEXT NOT NULL DEFAULT '',
+  dob TEXT NOT NULL DEFAULT '',
+  pan TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')
+);
+
+ALTER TABLE user_profile ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "service_role_all" ON user_profile FOR ALL USING (true) WITH CHECK (true);
