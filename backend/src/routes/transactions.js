@@ -34,6 +34,30 @@ router.get('/', (req, res) => {
   res.json(transactions);
 });
 
+router.get('/due-dates', (req, res) => {
+  const { month, year } = req.query;
+  if (!month || !year) return res.json({});
+
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT detected_source, due_date
+    FROM uploaded_files
+    WHERE due_date IS NOT NULL
+      AND detected_source IS NOT NULL
+      AND strftime('%m', due_date) = ?
+      AND strftime('%Y', due_date) = ?
+    ORDER BY uploaded_at DESC
+  `).all(month.padStart(2, '0'), year);
+
+  const dueDates = {};
+  for (const row of rows) {
+    if (!dueDates[row.detected_source]) {
+      dueDates[row.detected_source] = row.due_date;
+    }
+  }
+  res.json(dueDates);
+});
+
 router.get('/:id', (req, res) => {
   const db = getDb();
   const transaction = db.prepare(`

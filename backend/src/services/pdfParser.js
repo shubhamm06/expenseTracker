@@ -426,3 +426,74 @@ function extractAmexTransactions(text) {
 
   return transactions;
 }
+
+export function extractDueDateFromText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const fullText = lines.join(' ');
+
+  const months = {
+    jan: '01', january: '01', feb: '02', february: '02', mar: '03', march: '03',
+    apr: '04', april: '04', may: '05', jun: '06', june: '06',
+    jul: '07', july: '07', aug: '08', august: '08', sep: '09', september: '09',
+    oct: '10', october: '10', nov: '11', november: '11', dec: '12', december: '12',
+  };
+
+  const dueDatePatterns = [
+    /(?:payment\s*)?due\s*date\s*[:\-]?\s*(\d{1,2})[\/\-\s](\d{2}|\w{3,9})[\/\-\s](\d{4})/i,
+    /(?:total\s*)?(?:amount\s*)?due\s*(?:by|on|before)\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
+    /pay\s*(?:by|before|on)\s*(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/i,
+    /last\s*date\s*(?:for|of)\s*payment\s*[:\-]?\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
+    /payment\s*due\s*[:\-]?\s*(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/i,
+    /due\s*on\s*(\d{1,2})[\/\-\s](\w{3,9})[\/\-\s](\d{4})/i,
+    /due\s*date[\s\S]{0,30}?(\d{1,2})[\/\-](\d{2})[\/\-](\d{4})/i,
+  ];
+
+  for (const pattern of dueDatePatterns) {
+    const match = fullText.match(pattern);
+    if (match) {
+      const day = match[1].padStart(2, '0');
+      let month = match[2];
+      const year = match[3];
+
+      if (/^\d+$/.test(month)) {
+        month = month.padStart(2, '0');
+      } else {
+        month = months[month.toLowerCase()] || null;
+        if (!month) continue;
+      }
+
+      const numMonth = parseInt(month, 10);
+      const numDay = parseInt(day, 10);
+      if (numMonth < 1 || numMonth > 12 || numDay < 1 || numDay > 31) continue;
+
+      return `${year}-${month}-${day}`;
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    if (/due\s*date/i.test(lines[i])) {
+      const nearby = lines.slice(i, Math.min(i + 3, lines.length)).join(' ');
+      const dateMatch = nearby.match(/(\d{1,2})[\/\-\s]((?:\d{2}|\w{3,9}))[\/\-\s](\d{4})/);
+      if (dateMatch) {
+        const day = dateMatch[1].padStart(2, '0');
+        let month = dateMatch[2];
+        const year = dateMatch[3];
+
+        if (/^\d+$/.test(month)) {
+          month = month.padStart(2, '0');
+        } else {
+          month = months[month.toLowerCase()] || null;
+          if (!month) continue;
+        }
+
+        const numMonth = parseInt(month, 10);
+        const numDay = parseInt(day, 10);
+        if (numMonth < 1 || numMonth > 12 || numDay < 1 || numDay > 31) continue;
+
+        return `${year}-${month}-${day}`;
+      }
+    }
+  }
+
+  return null;
+}

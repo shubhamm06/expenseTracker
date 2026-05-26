@@ -190,6 +190,9 @@ export function initDb() {
   if (fileCols.length > 0 && !fileCols.includes('skipped_transactions')) {
     database.exec(`ALTER TABLE uploaded_files ADD COLUMN skipped_transactions TEXT;`);
   }
+  if (fileCols.length > 0 && !fileCols.includes('due_date')) {
+    database.exec(`ALTER TABLE uploaded_files ADD COLUMN due_date TEXT;`);
+  }
 
   const usageCols = database.prepare("PRAGMA table_info(voucher_usage)").all().map(c => c.name);
   if (usageCols.length > 0 && !usageCols.includes('email_metadata')) {

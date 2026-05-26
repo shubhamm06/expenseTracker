@@ -13,6 +13,7 @@ export default function Transactions() {
   const [renamingSource, setRenamingSource] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [addingSource, setAddingSource] = useState(null);
+  const [dueDates, setDueDates] = useState({});
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
@@ -28,6 +29,13 @@ export default function Transactions() {
       year: String(filters.year),
     });
     fetch(`/api/transactions?${params}`).then(r => r.json()).then(setTransactions);
+    const now = new Date();
+    const isCurrentMonth = filters.month === now.getMonth() + 1 && filters.year === now.getFullYear();
+    if (isCurrentMonth) {
+      fetch(`/api/transactions/due-dates?${params}`).then(r => r.json()).then(setDueDates);
+    } else {
+      setDueDates({});
+    }
   }
 
   useEffect(() => {
@@ -377,6 +385,18 @@ export default function Transactions() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
                           </svg>
                         </button>
+                        {dueDates[sourceName] && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md ml-1"
+                            style={{
+                              color: new Date(dueDates[sourceName]) < new Date() ? 'var(--danger)' : 'var(--warning, #d97706)',
+                              background: new Date(dueDates[sourceName]) < new Date() ? 'var(--danger-soft, rgba(239,68,68,0.08))' : 'var(--warning-soft, rgba(217,119,6,0.08))',
+                              border: '1px solid currentColor',
+                              opacity: 0.9,
+                            }}
+                          >
+                            Due: {new Date(dueDates[sourceName] + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                          </span>
+                        )}
                       </span>
                     )}
                   </div>

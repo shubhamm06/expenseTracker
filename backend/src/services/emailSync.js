@@ -6,7 +6,7 @@ import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from '../models/db.js';
-import { parsePdf, extractTransactionsFromText, extractSourceFromText } from './pdfParser.js';
+import { parsePdf, extractTransactionsFromText, extractSourceFromText, extractDueDateFromText } from './pdfParser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMP_DIR = join(__dirname, '../../tmp/email-attachments');
@@ -363,16 +363,19 @@ async function processAttachment(attachment, passwords, jobId, db) {
       }
     }
 
+    const dueDate = extractDueDateFromText(text);
+
     // Store as pending for manual review — do NOT auto-import
     db.prepare(`
-      INSERT INTO uploaded_files (original_name, mime_type, size, data, status, source_type, detected_source, pending_transactions)
-      VALUES (?, 'application/pdf', ?, ?, 'pending', 'email', ?, ?)
+      INSERT INTO uploaded_files (original_name, mime_type, size, data, status, source_type, detected_source, pending_transactions, due_date)
+      VALUES (?, 'application/pdf', ?, ?, 'pending', 'email', ?, ?, ?)
     `).run(
       attachment.filename,
       fileBuffer.length,
       fileBuffer,
       detectedSource || null,
-      JSON.stringify(valid)
+      JSON.stringify(valid),
+      dueDate || null
     );
 
     db.prepare(`
