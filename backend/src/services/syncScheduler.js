@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 import { runSyncForAccount } from './emailSync.js';
 import { runAmazonPaySync } from './amazonPaySync.js';
 
@@ -8,13 +8,11 @@ let amazonPayTask = null;
 const activeJobs = new Map();
 
 export function startScheduler() {
-  // Credit card statement sync — daily at 6 AM
   scheduledTask = cron.schedule('0 6 * * *', () => {
     syncAllAccounts();
   });
   console.log('[Scheduler] Email sync cron started (daily at 6 AM)');
 
-  // Amazon Pay sync — every 6 hours
   amazonPayTask = cron.schedule('0 */6 * * *', () => {
     syncAllAmazonPay();
   });
@@ -33,24 +31,25 @@ export function stopScheduler() {
 }
 
 export async function syncAllAccounts() {
-  const db = getDb();
-  const accounts = db.prepare(
-    "SELECT * FROM email_accounts WHERE status != 'disconnected'"
-  ).all();
+  const { data: accounts } = await supabase
+    .from('email_accounts')
+    .select('*')
+    .neq('status', 'disconnected');
 
-  for (const account of accounts) {
+  for (const account of accounts || []) {
     if (activeJobs.has(`statement-${account.id}`)) continue;
     triggerSync(account.id, { triggerType: 'cron' });
   }
 }
 
 export async function syncAllAmazonPay() {
-  const db = getDb();
-  const accounts = db.prepare(
-    "SELECT * FROM email_accounts WHERE amazon_pay_sync = 1 AND status != 'disconnected'"
-  ).all();
+  const { data: accounts } = await supabase
+    .from('email_accounts')
+    .select('*')
+    .eq('amazon_pay_sync', true)
+    .neq('status', 'disconnected');
 
-  for (const account of accounts) {
+  for (const account of accounts || []) {
     if (activeJobs.has(`amazon-${account.id}`)) continue;
     triggerAmazonPaySync(account.id, { triggerType: 'cron' });
   }

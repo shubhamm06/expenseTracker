@@ -5,7 +5,7 @@ import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync } from '
 import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 import { parsePdf, extractTransactionsFromText, extractSourceFromText } from './pdfParser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,15 +16,28 @@ if (!existsSync(TEMP_DIR)) {
 }
 
 export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'manual', syncPeriod } = {}) {
-  const db = getDb();
-  const account = db.prepare('SELECT * FROM email_accounts WHERE id = ?').get(accountId);
+  const { data: account } = await supabase
+    .from('email_accounts')
+    .select('*')
+    .eq('id', accountId)
+    .single();
+
   if (!account) throw new Error('Account not found');
 
-  const job = db.prepare(`
-    INSERT INTO email_sync_jobs (email_account_id, sync_type, trigger_type, status, started_at, sync_period)
-    VALUES (?, 'statement', ?, 'running', datetime('now', '+5 hours', '+30 minutes'), ?)
-  `).run(accountId, triggerType, syncPeriod || null);
-  const jobId = job.lastInsertRowid;
+  const { data: job } = await supabase
+    .from('email_sync_jobs')
+    .insert({
+      email_account_id: accountId,
+      sync_type: 'statement',
+      trigger_type: triggerType,
+      status: 'running',
+      started_at: new Date().toISOString(),
+      sync_period: syncPeriod || null,
+    })
+    .select('id')
+    .single();
+
+  const jobId = job.id;
 
   try {
     let sinceDate;
@@ -32,13 +45,13 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
       sinceDate = new Date();
       sinceDate.setDate(sinceDate.getDate() - sinceDays);
     } else if (account.last_sync_at) {
-      sinceDate = new Date(account.last_sync_at + (account.last_sync_at.includes('Z') ? '' : 'Z'));
+      sinceDate = new Date(account.last_sync_at);
     } else {
       sinceDate = new Date();
       sinceDate.setMonth(sinceDate.getMonth() - 2);
     }
 
-    const passwords = db.prepare('SELECT * FROM pdf_passwords').all();
+    const { data: passwords } = await supabase.from('pdf_passwords').select('*');
     let totalFound = 0;
     let totalImported = 0;
     let processed = 0;
@@ -46,34 +59,46 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
 
     await fetchAndProcessAttachments(account, sinceDate, async (attachment) => {
       totalFound++;
-      db.prepare('UPDATE email_sync_jobs SET total_attachments = ? WHERE id = ?')
-        .run(totalFound, jobId);
+      await supabase
+        .from('email_sync_jobs')
+        .update({ total_attachments: totalFound })
+        .eq('id', jobId);
 
-      const result = await processAttachment(attachment, passwords, jobId, db);
+      const result = await processAttachment(attachment, passwords || [], jobId);
       processed++;
       if (result.success) {
         totalImported += result.transactionsImported;
       } else {
         failed++;
       }
-      db.prepare(`
-        UPDATE email_sync_jobs SET processed_attachments = ?, imported_transactions = ?, failed_attachments = ? WHERE id = ?
-      `).run(processed, totalImported, failed, jobId);
+      await supabase
+        .from('email_sync_jobs')
+        .update({ processed_attachments: processed, imported_transactions: totalImported, failed_attachments: failed })
+        .eq('id', jobId);
     });
 
-    db.prepare(`
-      UPDATE email_sync_jobs SET status = 'completed', completed_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?
-    `).run(jobId);
-    db.prepare(`UPDATE email_accounts SET last_sync_at = datetime('now', '+5 hours', '+30 minutes'), status = 'connected', error_message = NULL WHERE id = ?`)
-      .run(accountId);
+    await supabase
+      .from('email_sync_jobs')
+      .update({ status: 'completed', completed_at: new Date().toISOString() })
+      .eq('id', jobId);
+
+    await supabase
+      .from('email_accounts')
+      .update({ last_sync_at: new Date().toISOString(), status: 'connected', error_message: null })
+      .eq('id', accountId);
 
     return { jobId, totalAttachments: totalFound, imported: totalImported, failed };
   } catch (err) {
-    db.prepare(`
-      UPDATE email_sync_jobs SET status = 'failed', error_message = ?, completed_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?
-    `).run(err.message, jobId);
-    db.prepare(`UPDATE email_accounts SET status = 'error', error_message = ? WHERE id = ?`)
-      .run(err.message, accountId);
+    await supabase
+      .from('email_sync_jobs')
+      .update({ status: 'failed', error_message: err.message, completed_at: new Date().toISOString() })
+      .eq('id', jobId);
+
+    await supabase
+      .from('email_accounts')
+      .update({ status: 'error', error_message: err.message })
+      .eq('id', accountId);
+
     throw err;
   }
 }
@@ -92,9 +117,13 @@ async function getImapAuth(account) {
     });
 
     const { credentials } = await oauth2Client.refreshAccessToken();
-    const db = getDb();
-    db.prepare('UPDATE email_accounts SET access_token = ?, token_expiry = ? WHERE id = ?')
-      .run(credentials.access_token, new Date(credentials.expiry_date).toISOString(), account.id);
+    await supabase
+      .from('email_accounts')
+      .update({
+        access_token: credentials.access_token,
+        token_expiry: new Date(credentials.expiry_date).toISOString(),
+      })
+      .eq('id', account.id);
 
     return {
       user: account.email,
@@ -302,7 +331,7 @@ async function fetchAndProcessAttachments(account, sinceDate, onAttachment) {
   }
 }
 
-async function processAttachment(attachment, passwords, jobId, db) {
+async function processAttachment(attachment, passwords, jobId) {
   const tempPath = join(TEMP_DIR, `${Date.now()}-${attachment.filename}`);
 
   try {
@@ -311,43 +340,50 @@ async function processAttachment(attachment, passwords, jobId, db) {
     const source = await tryExtractWithPasswords(tempPath, passwords, attachment.filename);
 
     if (!source) {
-      db.prepare(`
-        INSERT INTO email_sync_results (sync_job_id, filename, status, error_message)
-        VALUES (?, ?, 'password_failed', 'No matching password found')
-      `).run(jobId, attachment.filename);
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: attachment.filename,
+        status: 'password_failed',
+        error_message: 'No matching password found',
+      });
       return { success: false };
     }
 
     const { text, detectedSource } = source;
 
     if (isExcludedContent(text)) {
-      db.prepare(`
-        INSERT INTO email_sync_results (sync_job_id, filename, status, error_message)
-        VALUES (?, ?, 'skipped', 'Not a bank/card statement (bill, FD, or other document)')
-      `).run(jobId, attachment.filename);
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: attachment.filename,
+        status: 'skipped',
+        error_message: 'Not a bank/card statement (bill, FD, or other document)',
+      });
       return { success: false };
     }
 
     const transactions = extractTransactionsFromText(text, detectedSource);
 
     if (transactions.length === 0) {
-      db.prepare(`
-        INSERT INTO email_sync_results (sync_job_id, filename, status, error_message)
-        VALUES (?, ?, 'parse_failed', 'No transactions extracted')
-      `).run(jobId, attachment.filename);
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: attachment.filename,
+        status: 'parse_failed',
+        error_message: 'No transactions extracted',
+      });
       return { success: false };
     }
 
     const valid = transactions.filter(t => t.amount < 10000000);
     if (valid.length === 0) {
-      db.prepare(`
-        INSERT INTO email_sync_results (sync_job_id, filename, status, error_message)
-        VALUES (?, ?, 'parse_failed', 'Extracted amounts are invalid')
-      `).run(jobId, attachment.filename);
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: attachment.filename,
+        status: 'parse_failed',
+        error_message: 'Extracted amounts are invalid',
+      });
       return { success: false };
     }
 
-    // Store decrypted PDF if a password was used
     let fileBuffer = attachment.content;
     if (source.usedPassword) {
       const decryptedPath = tempPath + '.decrypted.pdf';
@@ -363,29 +399,38 @@ async function processAttachment(attachment, passwords, jobId, db) {
       }
     }
 
-    // Store as pending for manual review — do NOT auto-import
-    db.prepare(`
-      INSERT INTO uploaded_files (original_name, mime_type, size, data, status, source_type, detected_source, pending_transactions)
-      VALUES (?, 'application/pdf', ?, ?, 'pending', 'email', ?, ?)
-    `).run(
-      attachment.filename,
-      fileBuffer.length,
-      fileBuffer,
-      detectedSource || null,
-      JSON.stringify(valid)
-    );
+    // Upload to Supabase Storage
+    const storagePath = `uploads/email/${Date.now()}-${attachment.filename}`;
+    await supabase.storage
+      .from('uploads')
+      .upload(storagePath, fileBuffer, { contentType: 'application/pdf' });
 
-    db.prepare(`
-      INSERT INTO email_sync_results (sync_job_id, filename, status, transactions_imported)
-      VALUES (?, ?, 'success', ?)
-    `).run(jobId, attachment.filename, valid.length);
+    await supabase.from('uploaded_files').insert({
+      original_name: attachment.filename,
+      mime_type: 'application/pdf',
+      size: fileBuffer.length,
+      storage_path: storagePath,
+      status: 'pending',
+      source_type: 'email',
+      detected_source: detectedSource || null,
+      pending_transactions: JSON.stringify(valid),
+    });
+
+    await supabase.from('email_sync_results').insert({
+      sync_job_id: jobId,
+      filename: attachment.filename,
+      status: 'success',
+      transactions_imported: valid.length,
+    });
 
     return { success: true, transactionsImported: valid.length };
   } catch (err) {
-    db.prepare(`
-      INSERT INTO email_sync_results (sync_job_id, filename, status, error_message)
-      VALUES (?, ?, 'parse_failed', ?)
-    `).run(jobId, attachment.filename, err.message);
+    await supabase.from('email_sync_results').insert({
+      sync_job_id: jobId,
+      filename: attachment.filename,
+      status: 'parse_failed',
+      error_message: err.message,
+    });
     return { success: false };
   } finally {
     if (existsSync(tempPath)) {
@@ -395,7 +440,6 @@ async function processAttachment(attachment, passwords, jobId, db) {
 }
 
 async function tryExtractWithPasswords(filePath, passwords, filename) {
-  // First try without password (unencrypted PDF)
   try {
     const { text } = await parsePdf(filePath, null);
     const detectedSource = extractSourceFromText(text);
@@ -406,7 +450,6 @@ async function tryExtractWithPasswords(filePath, passwords, filename) {
     }
   }
 
-  // Try to match password by source_match against filename
   const filenameLower = filename.toLowerCase();
   const matchedPasswords = passwords.filter(p =>
     p.source_match && filenameLower.includes(p.source_match.toLowerCase())
@@ -415,7 +458,6 @@ async function tryExtractWithPasswords(filePath, passwords, filename) {
     !p.source_match || !filenameLower.includes(p.source_match.toLowerCase())
   );
 
-  // Try matched passwords first, then all others
   const orderedPasswords = [...matchedPasswords, ...unmatchedPasswords];
 
   for (const pwEntry of orderedPasswords) {
@@ -423,7 +465,6 @@ async function tryExtractWithPasswords(filePath, passwords, filename) {
       const { text } = await parsePdf(filePath, pwEntry.password);
       const detectedSource = extractSourceFromText(text);
 
-      // If we got a source from the PDF, check if it matches the password's source_match
       if (detectedSource && pwEntry.source_match) {
         const srcLower = detectedSource.toLowerCase();
         const matchLower = pwEntry.source_match.toLowerCase();
@@ -438,76 +479,5 @@ async function tryExtractWithPasswords(filePath, passwords, filename) {
     }
   }
 
-  return null;
-}
-
-function importTransactions(transactions, source, db) {
-  const rules = db.prepare('SELECT * FROM rules').all();
-  const insertStmt = db.prepare(`
-    INSERT INTO transactions (date, description, amount, type, category_id, source)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-  const dupCheckStmt = db.prepare(`
-    SELECT COUNT(*) as count FROM transactions
-    WHERE date = ? AND description = ? AND amount = ? AND type = ?
-  `);
-
-  let imported = 0;
-  const importMany = db.transaction((rows) => {
-    for (const row of rows) {
-      const date = normalizeDate(row.date);
-      if (!date || !row.amount) continue;
-
-      const description = row.description || '';
-      const type = row.type || 'debit';
-
-      const existing = dupCheckStmt.get(date, description, row.amount, type);
-      if (existing.count > 0) continue;
-
-      let categoryId = null;
-      const descLower = description.toLowerCase();
-      for (const rule of rules) {
-        if (descLower.includes(rule.pattern)) {
-          categoryId = rule.category_id;
-          break;
-        }
-      }
-
-      insertStmt.run(date, description, row.amount, type, categoryId, source || null);
-      imported++;
-    }
-  });
-
-  importMany(transactions);
-  return imported;
-}
-
-function normalizeDate(dateStr) {
-  const str = dateStr.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
-
-  const ddmmyyyy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (ddmmyyyy) {
-    const [, day, month, year] = ddmmyyyy;
-    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  }
-
-  const ddmmyy = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2})$/);
-  if (ddmmyy) {
-    const [, day, month, yr] = ddmmyy;
-    const year = parseInt(yr) > 50 ? `19${yr}` : `20${yr}`;
-    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-  }
-
-  const ddMonYyyy = str.match(/^(\d{1,2})\s+(\w{3})\s+(\d{4})$/);
-  if (ddMonYyyy) {
-    const [, day, mon, year] = ddMonYyyy;
-    const months = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
-    const m = months[mon.toLowerCase()];
-    if (m) return `${year}-${m}-${day.padStart(2, '0')}`;
-  }
-
-  const d = new Date(str);
-  if (!isNaN(d.getTime())) return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
   return null;
 }

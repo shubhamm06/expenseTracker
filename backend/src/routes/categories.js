@@ -1,33 +1,58 @@
 import { Router } from 'express';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
-  const categories = db.prepare('SELECT * FROM categories ORDER BY name').all();
-  res.json(categories);
+router.get('/', async (req, res) => {
+  const { data, error } = await supabase
+    .from('categories')
+    .select('*')
+    .order('name');
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.post('/', (req, res) => {
-  const db = getDb();
+router.post('/', async (req, res) => {
   const { name, color } = req.body;
-  const result = db.prepare('INSERT INTO categories (name, color) VALUES (?, ?)').run(name, color || '#6b7280');
-  res.status(201).json({ id: result.lastInsertRowid });
+  const { data, error } = await supabase
+    .from('categories')
+    .insert({ name, color: color || '#6b7280' })
+    .select('id')
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json({ id: data.id });
 });
 
-router.put('/:id', (req, res) => {
-  const db = getDb();
+router.put('/:id', async (req, res) => {
   const { name, color } = req.body;
-  db.prepare('UPDATE categories SET name = ?, color = ? WHERE id = ?').run(name, color, req.params.id);
+  const { error } = await supabase
+    .from('categories')
+    .update({ name, color })
+    .eq('id', req.params.id);
+
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
 
-router.delete('/:id', (req, res) => {
-  const db = getDb();
-  db.prepare('UPDATE transactions SET category_id = NULL WHERE category_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM rules WHERE category_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM categories WHERE id = ?').run(req.params.id);
+router.delete('/:id', async (req, res) => {
+  await supabase
+    .from('transactions')
+    .update({ category_id: null })
+    .eq('category_id', req.params.id);
+
+  await supabase
+    .from('rules')
+    .delete()
+    .eq('category_id', req.params.id);
+
+  const { error } = await supabase
+    .from('categories')
+    .delete()
+    .eq('id', req.params.id);
+
+  if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
 

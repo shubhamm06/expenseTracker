@@ -1,208 +1,101 @@
 import { Router } from 'express';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 
 const router = Router();
 
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   const { month, year } = req.query;
-  const db = getDb();
-
-  const paymentsCat = db.prepare("SELECT id FROM categories WHERE name = 'Payments'").get();
-  const paymentsCatId = paymentsCat ? paymentsCat.id : -1;
-
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
 
-  const totalSpend = db.prepare(`
-    SELECT COALESCE(SUM(amount), 0) as total
-    FROM transactions
-    WHERE type = 'debit'
-      AND is_reimbursable = 0
-      AND is_voucher_purchase = 0
-      AND (category_id IS NULL OR category_id != ?)
-      AND strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-  `).get(paymentsCatId, m, y);
-
-  const totalCredit = db.prepare(`
-    SELECT COALESCE(SUM(amount), 0) as total
-    FROM transactions
-    WHERE type = 'credit'
-      AND is_reimbursable = 0
-      AND (category_id IS NULL OR category_id != ?)
-      AND strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-  `).get(paymentsCatId, m, y);
-
-  const reimbursableTotal = db.prepare(`
-    SELECT COALESCE(SUM(amount), 0) as total
-    FROM transactions
-    WHERE type = 'debit'
-      AND is_reimbursable = 1
-      AND strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-  `).get(m, y);
-
-  const voucherUsageTotal = db.prepare(`
-    SELECT COALESCE(SUM(amount), 0) as total
-    FROM voucher_usage
-    WHERE strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-  `).get(m, y);
-
-  const voucherTopupsTotal = db.prepare(`
-    SELECT COALESCE(SUM(amount), 0) as total
-    FROM voucher_topups
-    WHERE strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-      AND source != 'manual'
-  `).get(m, y);
-
-  const categoryBreakdown = db.prepare(`
-    SELECT c.name, c.color, COALESCE(SUM(t.amount), 0) as total
-    FROM transactions t
-    LEFT JOIN categories c ON t.category_id = c.id
-    WHERE t.type = 'debit'
-      AND t.is_reimbursable = 0
-      AND t.is_voucher_purchase = 0
-      AND strftime('%m', t.date) = ?
-      AND strftime('%Y', t.date) = ?
-    GROUP BY t.category_id
-    ORDER BY total DESC
-  `).all(m, y);
-
-  const voucherCategoryBreakdown = db.prepare(`
-    SELECT c.name, c.color, COALESCE(SUM(vu.amount), 0) as total
-    FROM voucher_usage vu
-    LEFT JOIN categories c ON vu.category_id = c.id
-    WHERE strftime('%m', vu.date) = ?
-      AND strftime('%Y', vu.date) = ?
-    GROUP BY vu.category_id
-  `).all(m, y);
-
-  // Merge voucher usage into category breakdown
-  const merged = [...categoryBreakdown];
-  for (const vc of voucherCategoryBreakdown) {
-    const existing = merged.find(c => c.name === vc.name);
-    if (existing) {
-      existing.total += vc.total;
-    } else {
-      merged.push(vc);
-    }
-  }
-
-  const netVoucherSpend = voucherUsageTotal.total - voucherTopupsTotal.total;
-
-  res.json({
-    month: m,
-    year: y,
-    total_spend: totalSpend.total + netVoucherSpend,
-    total_credit: totalCredit.total,
-    direct_spend: totalSpend.total,
-    voucher_spend: netVoucherSpend,
-    reimbursable_total: reimbursableTotal.total,
-    category_breakdown: merged,
+  const { data, error } = await supabase.rpc('get_dashboard_summary', {
+    p_month: m,
+    p_year: y,
   });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.get('/monthly-comparison', (req, res) => {
-  const db = getDb();
+router.get('/monthly-comparison', async (req, res) => {
   const { months = 6 } = req.query;
 
-  const results = [];
-  const now = new Date();
+  const { data, error } = await supabase.rpc('get_monthly_comparison', {
+    p_months: Number(months),
+  });
 
-  for (let i = 0; i < Number(months); i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const y = String(d.getFullYear());
-
-    const directSpend = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM transactions
-      WHERE type = 'debit'
-        AND is_reimbursable = 0
-        AND is_voucher_purchase = 0
-        AND strftime('%m', date) = ?
-        AND strftime('%Y', date) = ?
-    `).get(m, y);
-
-    const creditTotal = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM transactions
-      WHERE type = 'credit'
-        AND is_reimbursable = 0
-        AND strftime('%m', date) = ?
-        AND strftime('%Y', date) = ?
-    `).get(m, y);
-
-    const voucherSpend = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM voucher_usage
-      WHERE strftime('%m', date) = ?
-        AND strftime('%Y', date) = ?
-    `).get(m, y);
-
-    const voucherTopups = db.prepare(`
-      SELECT COALESCE(SUM(amount), 0) as total
-      FROM voucher_topups
-      WHERE strftime('%m', date) = ?
-        AND strftime('%Y', date) = ?
-        AND source != 'manual'
-    `).get(m, y);
-
-    results.push({
-      month: m,
-      year: y,
-      label: d.toLocaleString('default', { month: 'short', year: 'numeric' }),
-      total: directSpend.total + (voucherSpend.total - voucherTopups.total),
-      credit: creditTotal.total,
-    });
-  }
-
-  res.json(results.reverse());
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.get('/top-merchants', (req, res) => {
+router.get('/top-merchants', async (req, res) => {
   const { month, year, limit = 8 } = req.query;
-  const db = getDb();
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
 
-  const merchants = db.prepare(`
-    SELECT description, SUM(amount) as total, COUNT(*) as count
-    FROM transactions
-    WHERE type = 'debit'
-      AND is_reimbursable = 0
-      AND is_voucher_purchase = 0
-      AND strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-    GROUP BY description
-    ORDER BY total DESC
-    LIMIT ?
-  `).all(m, y, Number(limit));
+  const startDate = `${y}-${m}-01`;
+  const mInt = parseInt(m);
+  const yInt = parseInt(y);
+  const nextMonth = mInt === 12 ? 1 : mInt + 1;
+  const nextYear = mInt === 12 ? yInt + 1 : yInt;
+  const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('description, amount')
+    .eq('type', 'debit')
+    .eq('is_reimbursable', false)
+    .eq('is_voucher_purchase', false)
+    .gte('date', startDate)
+    .lt('date', endDate);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const grouped = {};
+  for (const t of data || []) {
+    if (!grouped[t.description]) grouped[t.description] = { total: 0, count: 0 };
+    grouped[t.description].total += t.amount;
+    grouped[t.description].count++;
+  }
+
+  const merchants = Object.entries(grouped)
+    .map(([description, { total, count }]) => ({ description, total, count }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, Number(limit));
 
   res.json(merchants);
 });
 
-router.get('/source-breakdown', (req, res) => {
+router.get('/source-breakdown', async (req, res) => {
   const { month, year } = req.query;
-  const db = getDb();
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
 
-  const sources = db.prepare(`
-    SELECT source, 
-      SUM(CASE WHEN type = 'debit' AND is_reimbursable = 0 THEN amount ELSE 0 END) as debit,
-      SUM(CASE WHEN type = 'credit' AND is_reimbursable = 0 THEN amount ELSE 0 END) as credit,
-      COUNT(*) as count
-    FROM transactions
-    WHERE strftime('%m', date) = ?
-      AND strftime('%Y', date) = ?
-    GROUP BY source
-    ORDER BY debit DESC
-  `).all(m, y);
+  const startDate = `${y}-${m}-01`;
+  const mInt = parseInt(m);
+  const yInt = parseInt(y);
+  const nextMonth = mInt === 12 ? 1 : mInt + 1;
+  const nextYear = mInt === 12 ? yInt + 1 : yInt;
+  const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('source, type, amount, is_reimbursable')
+    .gte('date', startDate)
+    .lt('date', endDate);
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const grouped = {};
+  for (const t of data || []) {
+    const src = t.source || null;
+    if (!grouped[src]) grouped[src] = { source: src, debit: 0, credit: 0, count: 0 };
+    grouped[src].count++;
+    if (t.type === 'debit' && !t.is_reimbursable) grouped[src].debit += t.amount;
+    if (t.type === 'credit' && !t.is_reimbursable) grouped[src].credit += t.amount;
+  }
+
+  const sources = Object.values(grouped).sort((a, b) => b.debit - a.debit);
   res.json(sources);
 });
 

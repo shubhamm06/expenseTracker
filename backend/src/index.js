@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { initDb } from './models/db.js';
 import transactionsRouter from './routes/transactions.js';
 import categoriesRouter from './routes/categories.js';
 import rulesRouter from './routes/rules.js';
@@ -16,8 +15,6 @@ const PORT = 3002;
 
 app.use(cors());
 app.use(express.json());
-
-initDb();
 
 app.use('/api/transactions', transactionsRouter);
 app.use('/api/categories', categoriesRouter);

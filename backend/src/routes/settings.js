@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { google } from 'googleapis';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 import { triggerSync, triggerAmazonPaySync, isSyncRunning, isAmazonPaySyncRunning } from '../services/syncScheduler.js';
 
 const router = Router();
@@ -59,40 +59,45 @@ router.get('/oauth/google/callback', async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
     oauth2Client.setCredentials(tokens);
 
-    // Get user email
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const { data } = await oauth2.userinfo.get();
     const email = data.email;
 
-    const db = getDb();
-    const existing = db.prepare('SELECT id FROM email_accounts WHERE email = ?').get(email);
+    const { data: existing } = await supabase
+      .from('email_accounts')
+      .select('id')
+      .eq('email', email)
+      .single();
 
     if (existing) {
-      // Update tokens for existing account
-      db.prepare(`
-        UPDATE email_accounts
-        SET password = ?, auth_type = 'oauth', access_token = ?, token_expiry = ?, status = 'connected', error_message = NULL
-        WHERE id = ?
-      `).run(
-        tokens.refresh_token || '',
-        tokens.access_token,
-        tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
-        existing.id
-      );
+      await supabase
+        .from('email_accounts')
+        .update({
+          password: tokens.refresh_token || '',
+          auth_type: 'oauth',
+          access_token: tokens.access_token,
+          token_expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
+          status: 'connected',
+          error_message: null,
+        })
+        .eq('id', existing.id);
       triggerSync(existing.id, { triggerType: 'auto' });
     } else {
-      // Create new account
-      const result = db.prepare(`
-        INSERT INTO email_accounts (email, imap_host, imap_port, password, auth_type, access_token, token_expiry, display_name)
-        VALUES (?, 'imap.gmail.com', 993, ?, 'oauth', ?, ?, ?)
-      `).run(
-        email,
-        tokens.refresh_token || '',
-        tokens.access_token,
-        tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
-        data.name || email
-      );
-      triggerSync(result.lastInsertRowid, { triggerType: 'auto' });
+      const { data: newAccount } = await supabase
+        .from('email_accounts')
+        .insert({
+          email,
+          imap_host: 'imap.gmail.com',
+          imap_port: 993,
+          password: tokens.refresh_token || '',
+          auth_type: 'oauth',
+          access_token: tokens.access_token,
+          token_expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
+          display_name: data.name || email,
+        })
+        .select('id')
+        .single();
+      triggerSync(newAccount.id, { triggerType: 'auto' });
     }
 
     res.redirect('http://localhost:5173/settings?success=connected&email=' + encodeURIComponent(email));
@@ -104,12 +109,13 @@ router.get('/oauth/google/callback', async (req, res) => {
 
 // --- Email Accounts ---
 
-router.get('/email-accounts', (req, res) => {
-  const db = getDb();
-  const accounts = db.prepare(`
-    SELECT id, email, imap_host, imap_port, display_name, auth_type, amazon_pay_sync, status, last_sync_at, error_message, created_at
-    FROM email_accounts ORDER BY created_at DESC
-  `).all();
+router.get('/email-accounts', async (req, res) => {
+  const { data: accounts, error } = await supabase
+    .from('email_accounts')
+    .select('id, email, imap_host, imap_port, display_name, auth_type, amazon_pay_sync, status, last_sync_at, error_message, created_at')
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
 
   const enriched = accounts.map(a => ({
     ...a,
@@ -120,7 +126,7 @@ router.get('/email-accounts', (req, res) => {
   res.json(enriched);
 });
 
-router.post('/email-accounts', (req, res) => {
+router.post('/email-accounts', async (req, res) => {
   const { email, password, imap_host, imap_port, display_name } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
@@ -137,52 +143,71 @@ router.post('/email-accounts', (req, res) => {
     });
   }
 
-  const db = getDb();
-  try {
-    const result = db.prepare(`
-      INSERT INTO email_accounts (email, imap_host, imap_port, password, auth_type, display_name)
-      VALUES (?, ?, ?, ?, 'password', ?)
-    `).run(email, host, port, password, display_name || null);
-
-    const accountId = result.lastInsertRowid;
-    triggerSync(accountId, { triggerType: 'auto' });
-
-    res.json({
-      id: accountId,
+  const { data, error } = await supabase
+    .from('email_accounts')
+    .insert({
       email,
       imap_host: host,
       imap_port: port,
-      status: 'connected',
-      sync_started: true,
-    });
-  } catch (err) {
-    if (err.message.includes('UNIQUE')) {
+      password,
+      auth_type: 'password',
+      display_name: display_name || null,
+    })
+    .select('id')
+    .single();
+
+  if (error) {
+    if (error.message.includes('unique') || error.message.includes('duplicate')) {
       return res.status(409).json({ error: 'This email is already connected' });
     }
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: error.message });
   }
+
+  triggerSync(data.id, { triggerType: 'auto' });
+
+  res.json({
+    id: data.id,
+    email,
+    imap_host: host,
+    imap_port: port,
+    status: 'connected',
+    sync_started: true,
+  });
 });
 
-router.delete('/email-accounts/:id', (req, res) => {
-  const db = getDb();
-  const account = db.prepare('SELECT id FROM email_accounts WHERE id = ?').get(req.params.id);
+router.delete('/email-accounts/:id', async (req, res) => {
+  const { data: account } = await supabase
+    .from('email_accounts')
+    .select('id')
+    .eq('id', req.params.id)
+    .single();
+
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  const jobIds = db.prepare('SELECT id FROM email_sync_jobs WHERE email_account_id = ?').all(req.params.id).map(j => j.id);
-  if (jobIds.length > 0) {
-    const placeholders = jobIds.map(() => '?').join(',');
-    db.prepare(`DELETE FROM email_sync_results WHERE sync_job_id IN (${placeholders})`).run(...jobIds);
+  const { data: jobs } = await supabase
+    .from('email_sync_jobs')
+    .select('id')
+    .eq('email_account_id', req.params.id);
+
+  if (jobs && jobs.length > 0) {
+    const jobIds = jobs.map(j => j.id);
+    await supabase.from('email_sync_results').delete().in('sync_job_id', jobIds);
   }
-  db.prepare('DELETE FROM email_sync_jobs WHERE email_account_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM email_accounts WHERE id = ?').run(req.params.id);
+
+  await supabase.from('email_sync_jobs').delete().eq('email_account_id', req.params.id);
+  await supabase.from('email_accounts').delete().eq('id', req.params.id);
 
   res.json({ success: true });
 });
 
-router.post('/email-accounts/:id/sync', (req, res) => {
+router.post('/email-accounts/:id/sync', async (req, res) => {
   const accountId = parseInt(req.params.id);
-  const db = getDb();
-  const account = db.prepare('SELECT id FROM email_accounts WHERE id = ?').get(accountId);
+  const { data: account } = await supabase
+    .from('email_accounts')
+    .select('id')
+    .eq('id', accountId)
+    .single();
+
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
   const periodMap = { '1w': 7, '1m': 30, '2m': 60, '6m': 180, '12m': 365 };
@@ -198,85 +223,110 @@ router.post('/email-accounts/:id/sync', (req, res) => {
 
 // --- PDF Passwords ---
 
-router.get('/passwords', (req, res) => {
-  const db = getDb();
-  const passwords = db.prepare(`
-    SELECT id, label, password, source_match, created_at FROM pdf_passwords ORDER BY created_at DESC
-  `).all();
-  res.json(passwords);
+router.get('/passwords', async (req, res) => {
+  const { data, error } = await supabase
+    .from('pdf_passwords')
+    .select('id, label, password, source_match, created_at')
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.post('/passwords', (req, res) => {
+router.post('/passwords', async (req, res) => {
   const { label, password, source_match } = req.body;
   if (!label || !password) {
     return res.status(400).json({ error: 'label and password are required' });
   }
 
-  const db = getDb();
-  const result = db.prepare(`
-    INSERT INTO pdf_passwords (label, password, source_match) VALUES (?, ?, ?)
-  `).run(label, password, source_match || null);
+  const { data, error } = await supabase
+    .from('pdf_passwords')
+    .insert({ label, password, source_match: source_match || null })
+    .select('id, label, password, source_match')
+    .single();
 
-  res.json({ id: result.lastInsertRowid, label, password, source_match });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.patch('/passwords/:id', (req, res) => {
+router.patch('/passwords/:id', async (req, res) => {
   const { label, password, source_match } = req.body;
-  const db = getDb();
-  const existing = db.prepare('SELECT id FROM pdf_passwords WHERE id = ?').get(req.params.id);
+
+  const { data: existing } = await supabase
+    .from('pdf_passwords')
+    .select('id')
+    .eq('id', req.params.id)
+    .single();
+
   if (!existing) return res.status(404).json({ error: 'Password not found' });
 
-  if (label !== undefined) db.prepare('UPDATE pdf_passwords SET label = ? WHERE id = ?').run(label, req.params.id);
-  if (password !== undefined) db.prepare('UPDATE pdf_passwords SET password = ? WHERE id = ?').run(password, req.params.id);
-  if (source_match !== undefined) db.prepare('UPDATE pdf_passwords SET source_match = ? WHERE id = ?').run(source_match || null, req.params.id);
+  const updates = {};
+  if (label !== undefined) updates.label = label;
+  if (password !== undefined) updates.password = password;
+  if (source_match !== undefined) updates.source_match = source_match || null;
 
-  const updated = db.prepare('SELECT id, label, password, source_match, created_at FROM pdf_passwords WHERE id = ?').get(req.params.id);
+  await supabase.from('pdf_passwords').update(updates).eq('id', req.params.id);
+
+  const { data: updated } = await supabase
+    .from('pdf_passwords')
+    .select('id, label, password, source_match, created_at')
+    .eq('id', req.params.id)
+    .single();
+
   res.json(updated);
 });
 
-router.delete('/passwords/:id', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('DELETE FROM pdf_passwords WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Password not found' });
+router.delete('/passwords/:id', async (req, res) => {
+  const { data } = await supabase
+    .from('pdf_passwords')
+    .delete()
+    .eq('id', req.params.id)
+    .select('id');
+
+  if (!data || data.length === 0) return res.status(404).json({ error: 'Password not found' });
   res.json({ success: true });
 });
 
 // --- Sync Jobs ---
 
-router.get('/sync-jobs', (req, res) => {
-  const db = getDb();
+router.get('/sync-jobs', async (req, res) => {
+  const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  await supabase
+    .from('email_sync_jobs')
+    .update({
+      status: 'failed',
+      error_message: 'Timed out — stuck in progress for over 30 minutes',
+      completed_at: new Date().toISOString(),
+    })
+    .in('status', ['running', 'pending'])
+    .not('started_at', 'is', null)
+    .lt('started_at', thirtyMinAgo);
 
-  db.prepare(`
-    UPDATE email_sync_jobs
-    SET status = 'failed',
-        error_message = 'Timed out — stuck in progress for over 30 minutes',
-        completed_at = datetime('now', '+5 hours', '+30 minutes')
-    WHERE status IN ('running', 'pending')
-      AND started_at IS NOT NULL
-      AND datetime(started_at) < datetime('now', '+5 hours', '+30 minutes', '-30 minutes')
-  `).run();
+  const { data, error } = await supabase
+    .from('email_sync_jobs')
+    .select('*, email_accounts(email)')
+    .order('started_at', { ascending: false })
+    .limit(50);
 
-  const jobs = db.prepare(`
-    SELECT j.*, e.email
-    FROM email_sync_jobs j
-    JOIN email_accounts e ON e.id = j.email_account_id
-    ORDER BY j.started_at DESC
-    LIMIT 50
-  `).all();
+  if (error) return res.status(500).json({ error: error.message });
+
+  const jobs = data.map(j => ({
+    ...j,
+    email: j.email_accounts?.email,
+    email_accounts: undefined,
+  }));
   res.json(jobs);
 });
 
-router.get('/sync-schedule', (req, res) => {
+router.get('/sync-schedule', async (req, res) => {
   const now = new Date();
 
-  // Credit card sync: daily at 6 AM IST
   const nextStatement = new Date(now);
   nextStatement.setHours(6, 0, 0, 0);
   if (now >= nextStatement) {
     nextStatement.setDate(nextStatement.getDate() + 1);
   }
 
-  // Amazon Pay sync: every 6 hours (0, 6, 12, 18)
   const nextAmazon = new Date(now);
   const currentHour = now.getHours();
   const nextSlot = Math.ceil((currentHour + 1) / 6) * 6;
@@ -287,9 +337,19 @@ router.get('/sync-schedule', (req, res) => {
     nextAmazon.setHours(nextSlot, 0, 0, 0);
   }
 
-  const db = getDb();
-  const hasAmazonPay = db.prepare("SELECT COUNT(*) as count FROM email_accounts WHERE amazon_pay_sync = 1 AND status != 'disconnected'").get().count > 0;
-  const hasAccounts = db.prepare("SELECT COUNT(*) as count FROM email_accounts WHERE status != 'disconnected'").get().count > 0;
+  const { count: amazonCount } = await supabase
+    .from('email_accounts')
+    .select('*', { count: 'exact', head: true })
+    .eq('amazon_pay_sync', true)
+    .neq('status', 'disconnected');
+
+  const { count: accountCount } = await supabase
+    .from('email_accounts')
+    .select('*', { count: 'exact', head: true })
+    .neq('status', 'disconnected');
+
+  const hasAmazonPay = (amazonCount || 0) > 0;
+  const hasAccounts = (accountCount || 0) > 0;
 
   res.json({
     statement_sync: {
@@ -305,17 +365,24 @@ router.get('/sync-schedule', (req, res) => {
   });
 });
 
-router.get('/sync-jobs/:id/results', (req, res) => {
-  const db = getDb();
-  const results = db.prepare(`
-    SELECT * FROM email_sync_results WHERE sync_job_id = ? ORDER BY created_at
-  `).all(req.params.id);
-  res.json(results);
+router.get('/sync-jobs/:id/results', async (req, res) => {
+  const { data, error } = await supabase
+    .from('email_sync_results')
+    .select('*')
+    .eq('sync_job_id', req.params.id)
+    .order('created_at');
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.delete('/sync-results/:id', (req, res) => {
-  const db = getDb();
-  const result = db.prepare('SELECT * FROM email_sync_results WHERE id = ?').get(req.params.id);
+router.delete('/sync-results/:id', async (req, res) => {
+  const { data: result } = await supabase
+    .from('email_sync_results')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+
   if (!result) return res.status(404).json({ error: 'Not found' });
 
   const filenameMatch = result.filename.match(/^\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$/);
@@ -331,54 +398,91 @@ router.delete('/sync-results/:id', (req, res) => {
       const isRefund = /refund|gift\s*card/i.test(label);
 
       if (isRefund) {
-        const topup = db.prepare(
-          'SELECT id, voucher_id FROM voucher_topups WHERE date = ? AND amount = ? AND source = ?'
-        ).get(date, amount, 'email');
+        const { data: topup } = await supabase
+          .from('voucher_topups')
+          .select('id, voucher_id')
+          .eq('date', date)
+          .eq('amount', amount)
+          .eq('source', 'email')
+          .limit(1)
+          .single();
+
         if (topup) {
-          db.prepare('DELETE FROM voucher_topups WHERE id = ?').run(topup.id);
-          db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount - ? WHERE id = ?')
-            .run(amount, topup.voucher_id);
+          await supabase.from('voucher_topups').delete().eq('id', topup.id);
+          const { data: v } = await supabase
+            .from('vouchers')
+            .select('remaining_amount')
+            .eq('id', topup.voucher_id)
+            .single();
+          await supabase
+            .from('vouchers')
+            .update({ remaining_amount: v.remaining_amount - amount })
+            .eq('id', topup.voucher_id);
         }
       } else {
-        const usage = db.prepare(
-          'SELECT id, voucher_id FROM voucher_usage WHERE date = ? AND amount = ?'
-        ).get(date, amount);
+        const { data: usage } = await supabase
+          .from('voucher_usage')
+          .select('id, voucher_id')
+          .eq('date', date)
+          .eq('amount', amount)
+          .limit(1)
+          .single();
+
         if (usage) {
-          db.prepare('DELETE FROM voucher_usage WHERE id = ?').run(usage.id);
-          db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? WHERE id = ?')
-            .run(amount, usage.voucher_id);
+          await supabase.from('voucher_usage').delete().eq('id', usage.id);
+          const { data: v } = await supabase
+            .from('vouchers')
+            .select('remaining_amount')
+            .eq('id', usage.voucher_id)
+            .single();
+          await supabase
+            .from('vouchers')
+            .update({ remaining_amount: v.remaining_amount + amount })
+            .eq('id', usage.voucher_id);
         }
       }
     }
   }
 
-  db.prepare('DELETE FROM email_sync_results WHERE id = ?').run(req.params.id);
+  await supabase.from('email_sync_results').delete().eq('id', req.params.id);
   res.json({ success: true });
 });
 
 // --- Amazon Pay Sync ---
 
-router.patch('/email-accounts/:id/amazon-pay-sync', (req, res) => {
-  const db = getDb();
+router.patch('/email-accounts/:id/amazon-pay-sync', async (req, res) => {
   const { enabled } = req.body;
   const accountId = parseInt(req.params.id);
-  const account = db.prepare('SELECT id FROM email_accounts WHERE id = ?').get(accountId);
+
+  const { data: account } = await supabase
+    .from('email_accounts')
+    .select('id')
+    .eq('id', accountId)
+    .single();
+
   if (!account) return res.status(404).json({ error: 'Account not found' });
 
-  db.prepare('UPDATE email_accounts SET amazon_pay_sync = ? WHERE id = ?')
-    .run(enabled ? 1 : 0, accountId);
+  await supabase
+    .from('email_accounts')
+    .update({ amazon_pay_sync: !!enabled })
+    .eq('id', accountId);
 
   if (enabled) {
     triggerAmazonPaySync(accountId, { triggerType: 'auto' });
   }
 
-  res.json({ success: true, amazon_pay_sync: enabled ? 1 : 0 });
+  res.json({ success: true, amazon_pay_sync: !!enabled });
 });
 
-router.post('/email-accounts/:id/sync-amazon-pay', (req, res) => {
+router.post('/email-accounts/:id/sync-amazon-pay', async (req, res) => {
   const accountId = parseInt(req.params.id);
-  const db = getDb();
-  const account = db.prepare('SELECT id, amazon_pay_sync FROM email_accounts WHERE id = ?').get(accountId);
+
+  const { data: account } = await supabase
+    .from('email_accounts')
+    .select('id, amazon_pay_sync')
+    .eq('id', accountId)
+    .single();
+
   if (!account) return res.status(404).json({ error: 'Account not found' });
   if (!account.amazon_pay_sync) return res.status(400).json({ error: 'Amazon Pay sync not enabled for this account' });
 

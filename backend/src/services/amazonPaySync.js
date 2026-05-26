@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import { getDb } from '../models/db.js';
+import { google } from 'googleapis';
+import { supabase } from '../models/supabase.js';
 
 const AMAZON_PAY_PATTERNS = {
   payment: /Your payment of ₹\s*([\d,]+(?:\.\d+)?)\s*to\s+(.+?)\s+was successful/i,
@@ -34,15 +35,28 @@ function isAmazonPayEmail(from, subject) {
 }
 
 export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'manual', syncPeriod } = {}) {
-  const db = getDb();
-  const account = db.prepare('SELECT * FROM email_accounts WHERE id = ?').get(accountId);
+  const { data: account } = await supabase
+    .from('email_accounts')
+    .select('*')
+    .eq('id', accountId)
+    .single();
+
   if (!account || !account.amazon_pay_sync) return { synced: 0 };
 
-  const job = db.prepare(`
-    INSERT INTO email_sync_jobs (email_account_id, sync_type, trigger_type, status, started_at, sync_period)
-    VALUES (?, 'amazon_pay', ?, 'running', datetime('now', '+5 hours', '+30 minutes'), ?)
-  `).run(accountId, triggerType, syncPeriod || null);
-  const jobId = job.lastInsertRowid;
+  const { data: job } = await supabase
+    .from('email_sync_jobs')
+    .insert({
+      email_account_id: accountId,
+      sync_type: 'amazon_pay',
+      trigger_type: triggerType,
+      status: 'running',
+      started_at: new Date().toISOString(),
+      sync_period: syncPeriod || null,
+    })
+    .select('id')
+    .single();
+
+  const jobId = job.id;
 
   try {
     const auth = await getImapAuth(account);
@@ -59,11 +73,16 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
       sinceDate = new Date();
       sinceDate.setDate(sinceDate.getDate() - sinceDays);
     } else {
-      const lastSuccess = db.prepare(`
-        SELECT completed_at FROM email_sync_jobs
-        WHERE email_account_id = ? AND sync_type = 'amazon_pay' AND status = 'completed'
-        ORDER BY completed_at DESC LIMIT 1
-      `).get(accountId);
+      const { data: lastSuccess } = await supabase
+        .from('email_sync_jobs')
+        .select('completed_at')
+        .eq('email_account_id', accountId)
+        .eq('sync_type', 'amazon_pay')
+        .eq('status', 'completed')
+        .order('completed_at', { ascending: false })
+        .limit(1)
+        .single();
+
       if (lastSuccess && lastSuccess.completed_at) {
         sinceDate = new Date(lastSuccess.completed_at);
         sinceDate.setDate(sinceDate.getDate() - 1);
@@ -73,9 +92,17 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
       }
     }
 
-    const voucher = getOrCreateAmazonPayVoucher(db);
-    const existingUsage = db.prepare('SELECT date, amount, description FROM voucher_usage WHERE voucher_id = ?').all(voucher.id);
-    const existingTopups = db.prepare('SELECT date, amount, description FROM voucher_topups WHERE voucher_id = ?').all(voucher.id);
+    const voucher = await getOrCreateAmazonPayVoucher();
+
+    const { data: existingUsage } = await supabase
+      .from('voucher_usage')
+      .select('date, amount, description')
+      .eq('voucher_id', voucher.id);
+
+    const { data: existingTopups } = await supabase
+      .from('voucher_topups')
+      .select('date, amount, description')
+      .eq('voucher_id', voucher.id);
 
     let totalFound = 0;
     let processed = 0;
@@ -104,13 +131,15 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
             for (const txn of results) {
               if (txn === null || txn === 'no_match') continue;
               totalFound++;
-              const result = processTransaction(txn, voucher, existingUsage, existingTopups, jobId, db);
+              const result = await processTransaction(txn, voucher, existingUsage || [], existingTopups || [], jobId);
               if (result === 'new') newCount++;
               else if (result === 'skipped') skipped++;
               processed++;
             }
-            db.prepare('UPDATE email_sync_jobs SET total_attachments = ?, processed_attachments = ?, imported_transactions = ?, failed_attachments = ? WHERE id = ?')
-              .run(totalFound, processed, newCount, skipped, jobId);
+            await supabase
+              .from('email_sync_jobs')
+              .update({ total_attachments: totalFound, processed_attachments: processed, imported_transactions: newCount, failed_attachments: skipped })
+              .eq('id', jobId);
             batch = [];
           }
         }
@@ -120,13 +149,15 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
           for (const txn of results) {
             if (txn === null || txn === 'no_match') continue;
             totalFound++;
-            const result = processTransaction(txn, voucher, existingUsage, existingTopups, jobId, db);
+            const result = await processTransaction(txn, voucher, existingUsage || [], existingTopups || [], jobId);
             if (result === 'new') newCount++;
             else if (result === 'skipped') skipped++;
             processed++;
           }
-          db.prepare('UPDATE email_sync_jobs SET total_attachments = ?, processed_attachments = ?, imported_transactions = ?, failed_attachments = ? WHERE id = ?')
-            .run(totalFound, processed, newCount, skipped, jobId);
+          await supabase
+            .from('email_sync_jobs')
+            .update({ total_attachments: totalFound, processed_attachments: processed, imported_transactions: newCount, failed_attachments: skipped })
+            .eq('id', jobId);
         }
       } finally {
         lock.release();
@@ -138,15 +169,17 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
       throw new Error(`Amazon Pay sync failed: ${err.message}`);
     }
 
-    db.prepare(`
-      UPDATE email_sync_jobs SET status = 'completed', imported_transactions = ?, failed_attachments = ?, completed_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?
-    `).run(newCount, skipped, jobId);
+    await supabase
+      .from('email_sync_jobs')
+      .update({ status: 'completed', imported_transactions: newCount, failed_attachments: skipped, completed_at: new Date().toISOString() })
+      .eq('id', jobId);
 
     return { jobId, synced: newCount, total: totalFound };
   } catch (err) {
-    db.prepare(`
-      UPDATE email_sync_jobs SET status = 'failed', error_message = ?, completed_at = datetime('now', '+5 hours', '+30 minutes') WHERE id = ?
-    `).run(err.message, jobId);
+    await supabase
+      .from('email_sync_jobs')
+      .update({ status: 'failed', error_message: err.message, completed_at: new Date().toISOString() })
+      .eq('id', jobId);
     throw err;
   }
 }
@@ -236,7 +269,7 @@ function parseTransaction(combined, parsed, subject, emailMetadata) {
   return null;
 }
 
-function processTransaction(txn, voucher, existingUsage, existingTopups, jobId, db) {
+async function processTransaction(txn, voucher, existingUsage, existingTopups, jobId) {
   const date = txn.date
     ? txn.date.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
     : new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -248,40 +281,96 @@ function processTransaction(txn, voucher, existingUsage, existingTopups, jobId, 
     const isDup = existingUsage.some(u => u.date === date && Math.abs(u.amount - txn.amount) < 0.01 && u.description === txn.description);
     if (isDup) {
       if (txn.emailMetadata) {
-        db.prepare('UPDATE voucher_usage SET email_metadata = ? WHERE voucher_id = ? AND date = ? AND amount = ? AND description = ?')
-          .run(txn.emailMetadata, voucher.id, date, txn.amount, txn.description);
+        await supabase
+          .from('voucher_usage')
+          .update({ email_metadata: txn.emailMetadata })
+          .eq('voucher_id', voucher.id)
+          .eq('date', date)
+          .eq('amount', txn.amount)
+          .eq('description', txn.description);
       }
-      db.prepare(`INSERT INTO email_sync_results (sync_job_id, filename, status, error_message) VALUES (?, ?, 'skipped', 'Duplicate')`)
-        .run(jobId, `[${date}] ${label}`);
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: `[${date}] ${label}`,
+        status: 'skipped',
+        error_message: 'Duplicate',
+      });
       return 'skipped';
     }
 
-    db.prepare('INSERT INTO voucher_usage (voucher_id, amount, date, description, email_metadata) VALUES (?, ?, ?, ?, ?)')
-      .run(voucher.id, txn.amount, date, txn.description, txn.emailMetadata || null);
-    db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount - ? WHERE id = ?')
-      .run(txn.amount, voucher.id);
-    db.prepare(`INSERT INTO email_sync_results (sync_job_id, filename, status, transactions_imported) VALUES (?, ?, 'success', 1)`)
-      .run(jobId, `[${date}] ${label}`);
+    await supabase.from('voucher_usage').insert({
+      voucher_id: voucher.id,
+      amount: txn.amount,
+      date,
+      description: txn.description,
+      email_metadata: txn.emailMetadata || null,
+    });
+
+    const { data: v } = await supabase
+      .from('vouchers')
+      .select('remaining_amount')
+      .eq('id', voucher.id)
+      .single();
+
+    await supabase
+      .from('vouchers')
+      .update({ remaining_amount: v.remaining_amount - txn.amount })
+      .eq('id', voucher.id);
+
+    await supabase.from('email_sync_results').insert({
+      sync_job_id: jobId,
+      filename: `[${date}] ${label}`,
+      status: 'success',
+      transactions_imported: 1,
+    });
     existingUsage.push({ date, amount: txn.amount, description: txn.description });
     return 'new';
   } else if (txn.type === 'refund') {
     const isDup = existingTopups.some(t => t.date === date && Math.abs(t.amount - txn.amount) < 0.01);
     if (isDup) {
       if (txn.emailMetadata) {
-        db.prepare('UPDATE voucher_topups SET email_metadata = ? WHERE voucher_id = ? AND date = ? AND amount = ?')
-          .run(txn.emailMetadata, voucher.id, date, txn.amount);
+        await supabase
+          .from('voucher_topups')
+          .update({ email_metadata: txn.emailMetadata })
+          .eq('voucher_id', voucher.id)
+          .eq('date', date)
+          .eq('amount', txn.amount);
       }
-      db.prepare(`INSERT INTO email_sync_results (sync_job_id, filename, status, error_message) VALUES (?, ?, 'skipped', 'Duplicate')`)
-        .run(jobId, `[${date}] ${label}`);
+      await supabase.from('email_sync_results').insert({
+        sync_job_id: jobId,
+        filename: `[${date}] ${label}`,
+        status: 'skipped',
+        error_message: 'Duplicate',
+      });
       return 'skipped';
     }
 
-    db.prepare('INSERT INTO voucher_topups (voucher_id, amount, date, description, source, email_metadata) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(voucher.id, txn.amount, date, txn.description, 'email', txn.emailMetadata || null);
-    db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? WHERE id = ?')
-      .run(txn.amount, voucher.id);
-    db.prepare(`INSERT INTO email_sync_results (sync_job_id, filename, status, transactions_imported) VALUES (?, ?, 'success', 1)`)
-      .run(jobId, `[${date}] ${label}`);
+    await supabase.from('voucher_topups').insert({
+      voucher_id: voucher.id,
+      amount: txn.amount,
+      date,
+      description: txn.description,
+      source: 'email',
+      email_metadata: txn.emailMetadata || null,
+    });
+
+    const { data: v } = await supabase
+      .from('vouchers')
+      .select('remaining_amount')
+      .eq('id', voucher.id)
+      .single();
+
+    await supabase
+      .from('vouchers')
+      .update({ remaining_amount: v.remaining_amount + txn.amount })
+      .eq('id', voucher.id);
+
+    await supabase.from('email_sync_results').insert({
+      sync_job_id: jobId,
+      filename: `[${date}] ${label}`,
+      status: 'success',
+      transactions_imported: 1,
+    });
     existingTopups.push({ date, amount: txn.amount });
     return 'new';
   }
@@ -289,21 +378,31 @@ function processTransaction(txn, voucher, existingUsage, existingTopups, jobId, 
   return null;
 }
 
-export function getOrCreateAmazonPayVoucher(db) {
-  let voucher = db.prepare("SELECT * FROM vouchers WHERE name = 'Amazon Pay Balance'").get();
-  if (!voucher) {
-    const result = db.prepare(`
-      INSERT INTO vouchers (name, initial_amount, remaining_amount, purchase_date)
-      VALUES ('Amazon Pay Balance', 0, 0, ?)
-    `).run(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }));
-    voucher = db.prepare('SELECT * FROM vouchers WHERE id = ?').get(result.lastInsertRowid);
-  }
-  return voucher;
+export async function getOrCreateAmazonPayVoucher() {
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('*')
+    .eq('name', 'Amazon Pay Balance')
+    .single();
+
+  if (voucher) return voucher;
+
+  const { data: newVoucher } = await supabase
+    .from('vouchers')
+    .insert({
+      name: 'Amazon Pay Balance',
+      initial_amount: 0,
+      remaining_amount: 0,
+      purchase_date: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }),
+    })
+    .select('*')
+    .single();
+
+  return newVoucher;
 }
 
 async function getImapAuth(account) {
   if (account.auth_type === 'oauth') {
-    const { google } = await import('googleapis');
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
@@ -316,9 +415,13 @@ async function getImapAuth(account) {
     });
 
     const { credentials } = await oauth2Client.refreshAccessToken();
-    const db = getDb();
-    db.prepare('UPDATE email_accounts SET access_token = ?, token_expiry = ? WHERE id = ?')
-      .run(credentials.access_token, new Date(credentials.expiry_date).toISOString(), account.id);
+    await supabase
+      .from('email_accounts')
+      .update({
+        access_token: credentials.access_token,
+        token_expiry: new Date(credentials.expiry_date).toISOString(),
+      })
+      .eq('id', account.id);
 
     return {
       user: account.email,

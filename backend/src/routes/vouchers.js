@@ -1,135 +1,228 @@
 import { Router } from 'express';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
-  const vouchers = db.prepare('SELECT * FROM vouchers ORDER BY purchase_date DESC').all();
-  res.json(vouchers);
+router.get('/', async (req, res) => {
+  const { data, error } = await supabase
+    .from('vouchers')
+    .select('*')
+    .order('purchase_date', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.post('/', (req, res) => {
-  const db = getDb();
+router.post('/', async (req, res) => {
   const { name, initial_amount, purchase_date, source_transaction_id } = req.body;
 
-  const result = db.prepare(`
-    INSERT INTO vouchers (name, initial_amount, remaining_amount, purchase_date, source_transaction_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(name, initial_amount, initial_amount, purchase_date, source_transaction_id || null);
+  const { data, error } = await supabase
+    .from('vouchers')
+    .insert({
+      name,
+      initial_amount,
+      remaining_amount: initial_amount,
+      purchase_date,
+      source_transaction_id: source_transaction_id || null,
+    })
+    .select('id')
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
 
   if (source_transaction_id) {
-    db.prepare('UPDATE transactions SET is_voucher_purchase = 1, voucher_id = ? WHERE id = ?')
-      .run(result.lastInsertRowid, source_transaction_id);
+    await supabase
+      .from('transactions')
+      .update({ is_voucher_purchase: true, voucher_id: data.id })
+      .eq('id', source_transaction_id);
   }
 
-  res.status(201).json({ id: result.lastInsertRowid });
+  res.status(201).json({ id: data.id });
 });
 
-router.get('/:id/usage', (req, res) => {
-  const db = getDb();
+router.get('/:id/usage', async (req, res) => {
   const { month, year } = req.query;
-  let sql = `
-    SELECT vu.*, c.name as category_name, c.color as category_color
-    FROM voucher_usage vu
-    LEFT JOIN categories c ON vu.category_id = c.id
-    WHERE vu.voucher_id = ?
-  `;
-  const params = [req.params.id];
+
+  let query = supabase
+    .from('voucher_usage')
+    .select('*, categories(name, color)')
+    .eq('voucher_id', req.params.id)
+    .order('date', { ascending: false });
+
   if (month && year) {
-    sql += ` AND CAST(strftime('%m', vu.date) AS INTEGER) = ? AND CAST(strftime('%Y', vu.date) AS INTEGER) = ?`;
-    params.push(Number(month), Number(year));
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const m = parseInt(month);
+    const y = parseInt(year);
+    const nextMonth = m === 12 ? 1 : m + 1;
+    const nextYear = m === 12 ? y + 1 : y;
+    const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+    query = query.gte('date', startDate).lt('date', endDate);
   }
-  sql += ' ORDER BY vu.date DESC';
-  res.json(db.prepare(sql).all(...params));
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const usage = data.map(u => ({
+    ...u,
+    category_name: u.categories?.name,
+    category_color: u.categories?.color,
+    categories: undefined,
+  }));
+  res.json(usage);
 });
 
-router.post('/:id/usage', (req, res) => {
-  const db = getDb();
+router.post('/:id/usage', async (req, res) => {
   const { amount, date, description, category_id } = req.body;
   const voucherId = req.params.id;
 
-  const voucher = db.prepare('SELECT * FROM vouchers WHERE id = ?').get(voucherId);
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('*')
+    .eq('id', voucherId)
+    .single();
+
   if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
   if (voucher.remaining_amount < amount) {
     return res.status(400).json({ error: 'Insufficient voucher balance' });
   }
 
-  const result = db.prepare(`
-    INSERT INTO voucher_usage (voucher_id, amount, date, description, category_id)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(voucherId, amount, date, description || null, category_id || null);
+  const { data, error } = await supabase
+    .from('voucher_usage')
+    .insert({
+      voucher_id: voucherId,
+      amount,
+      date,
+      description: description || null,
+      category_id: category_id || null,
+    })
+    .select('id')
+    .single();
 
-  db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount - ? WHERE id = ?')
-    .run(amount, voucherId);
+  if (error) return res.status(500).json({ error: error.message });
 
-  res.status(201).json({ id: result.lastInsertRowid });
+  await supabase
+    .from('vouchers')
+    .update({ remaining_amount: voucher.remaining_amount - amount })
+    .eq('id', voucherId);
+
+  res.status(201).json({ id: data.id });
 });
 
-router.get('/:id/topups', (req, res) => {
-  const db = getDb();
+router.get('/:id/topups', async (req, res) => {
   const { month, year } = req.query;
-  let sql = 'SELECT * FROM voucher_topups WHERE voucher_id = ?';
-  const params = [req.params.id];
+
+  let query = supabase
+    .from('voucher_topups')
+    .select('*')
+    .eq('voucher_id', req.params.id)
+    .order('date', { ascending: false });
+
   if (month && year) {
-    sql += ` AND CAST(strftime('%m', date) AS INTEGER) = ? AND CAST(strftime('%Y', date) AS INTEGER) = ?`;
-    params.push(Number(month), Number(year));
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const m = parseInt(month);
+    const y = parseInt(year);
+    const nextMonth = m === 12 ? 1 : m + 1;
+    const nextYear = m === 12 ? y + 1 : y;
+    const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+    query = query.gte('date', startDate).lt('date', endDate);
   }
-  sql += ' ORDER BY date DESC';
-  res.json(db.prepare(sql).all(...params));
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
-router.post('/:id/topup', (req, res) => {
-  const db = getDb();
+router.post('/:id/topup', async (req, res) => {
   const { amount, date, description, source } = req.body;
   const voucherId = req.params.id;
 
-  const voucher = db.prepare('SELECT * FROM vouchers WHERE id = ?').get(voucherId);
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('*')
+    .eq('id', voucherId)
+    .single();
+
   if (!voucher) return res.status(404).json({ error: 'Voucher not found' });
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Amount must be positive' });
 
   const topupSource = source || 'manual';
-  const result = db.prepare(`
-    INSERT INTO voucher_topups (voucher_id, amount, date, description, source)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(voucherId, amount, date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }), description || null, topupSource);
+  const topupDate = date || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+
+  const { data, error } = await supabase
+    .from('voucher_topups')
+    .insert({
+      voucher_id: voucherId,
+      amount,
+      date: topupDate,
+      description: description || null,
+      source: topupSource,
+    })
+    .select('id')
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
 
   if (topupSource === 'manual') {
-    db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ?, initial_amount = initial_amount + ? WHERE id = ?')
-      .run(amount, amount, voucherId);
+    await supabase
+      .from('vouchers')
+      .update({
+        remaining_amount: voucher.remaining_amount + amount,
+        initial_amount: voucher.initial_amount + amount,
+      })
+      .eq('id', voucherId);
   } else {
-    db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? WHERE id = ?')
-      .run(amount, voucherId);
+    await supabase
+      .from('vouchers')
+      .update({ remaining_amount: voucher.remaining_amount + amount })
+      .eq('id', voucherId);
   }
 
-  res.status(201).json({ id: result.lastInsertRowid });
+  res.status(201).json({ id: data.id });
 });
 
-router.delete('/usage/:id', (req, res) => {
-  const db = getDb();
-  const entry = db.prepare('SELECT * FROM voucher_usage WHERE id = ?').get(req.params.id);
+router.delete('/usage/:id', async (req, res) => {
+  const { data: entry } = await supabase
+    .from('voucher_usage')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  db.prepare('DELETE FROM voucher_usage WHERE id = ?').run(req.params.id);
-  db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? WHERE id = ?')
-    .run(entry.amount, entry.voucher_id);
+  await supabase.from('voucher_usage').delete().eq('id', req.params.id);
+
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('remaining_amount')
+    .eq('id', entry.voucher_id)
+    .single();
+
+  await supabase
+    .from('vouchers')
+    .update({ remaining_amount: voucher.remaining_amount + entry.amount })
+    .eq('id', entry.voucher_id);
+
   res.json({ success: true });
 });
 
-router.post('/usage/auto-categorize', (req, res) => {
-  const db = getDb();
-  const rules = db.prepare('SELECT * FROM rules').all();
-  const uncategorized = db.prepare("SELECT * FROM voucher_usage WHERE category_id IS NULL OR category_source = 'rule'").all();
+router.post('/usage/auto-categorize', async (req, res) => {
+  const { data: rules } = await supabase.from('rules').select('*');
+  const { data: uncategorized } = await supabase
+    .from('voucher_usage')
+    .select('*')
+    .or('category_id.is.null,category_source.eq.rule');
+
   let applied = 0;
 
-  const updateStmt = db.prepare("UPDATE voucher_usage SET category_id = ?, category_source = 'rule' WHERE id = ?");
-
-  for (const entry of uncategorized) {
+  for (const entry of uncategorized || []) {
     const desc = (entry.description || '').toLowerCase();
-    for (const rule of rules) {
+    for (const rule of rules || []) {
       const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
       if (patterns.some(p => desc.includes(p))) {
-        updateStmt.run(rule.category_id, entry.id);
+        await supabase
+          .from('voucher_usage')
+          .update({ category_id: rule.category_id, category_source: 'rule' })
+          .eq('id', entry.id);
         applied++;
         break;
       }
@@ -139,78 +232,120 @@ router.post('/usage/auto-categorize', (req, res) => {
   res.json({ applied });
 });
 
-router.patch('/usage/:id/category', (req, res) => {
-  const db = getDb();
+router.patch('/usage/:id/category', async (req, res) => {
   const { category_id } = req.body;
-  const entry = db.prepare('SELECT * FROM voucher_usage WHERE id = ?').get(req.params.id);
+
+  const { data: entry } = await supabase
+    .from('voucher_usage')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  db.prepare("UPDATE voucher_usage SET category_id = ?, category_source = 'manual' WHERE id = ?")
-    .run(category_id || null, req.params.id);
+  await supabase
+    .from('voucher_usage')
+    .update({ category_id: category_id || null, category_source: 'manual' })
+    .eq('id', req.params.id);
+
   res.json({ success: true });
 });
 
-router.delete('/topup/:id', (req, res) => {
-  const db = getDb();
-  const entry = db.prepare('SELECT * FROM voucher_topups WHERE id = ?').get(req.params.id);
+router.delete('/topup/:id', async (req, res) => {
+  const { data: entry } = await supabase
+    .from('voucher_topups')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  db.prepare('DELETE FROM voucher_topups WHERE id = ?').run(req.params.id);
-  db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount - ? WHERE id = ?')
-    .run(entry.amount, entry.voucher_id);
+  await supabase.from('voucher_topups').delete().eq('id', req.params.id);
+
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('remaining_amount, initial_amount')
+    .eq('id', entry.voucher_id)
+    .single();
+
+  const updates = { remaining_amount: voucher.remaining_amount - entry.amount };
   if (entry.source === 'manual') {
-    db.prepare('UPDATE vouchers SET initial_amount = initial_amount - ? WHERE id = ?')
-      .run(entry.amount, entry.voucher_id);
+    updates.initial_amount = voucher.initial_amount - entry.amount;
   }
+
+  await supabase.from('vouchers').update(updates).eq('id', entry.voucher_id);
   res.json({ success: true });
 });
 
-router.delete('/:id/clear-month', (req, res) => {
-  const db = getDb();
+router.delete('/:id/clear-month', async (req, res) => {
   const { month, year } = req.query;
   if (!month || !year) return res.status(400).json({ error: 'month and year are required' });
 
   const voucherId = req.params.id;
-  const m = Number(month);
-  const y = Number(year);
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const m = parseInt(month);
+  const y = parseInt(year);
+  const nextMonth = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? y + 1 : y;
+  const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
-  const usageRows = db.prepare(`
-    SELECT * FROM voucher_usage WHERE voucher_id = ?
-    AND CAST(strftime('%m', date) AS INTEGER) = ? AND CAST(strftime('%Y', date) AS INTEGER) = ?
-  `).all(voucherId, m, y);
+  const { data: usageRows } = await supabase
+    .from('voucher_usage')
+    .select('*')
+    .eq('voucher_id', voucherId)
+    .gte('date', startDate)
+    .lt('date', endDate);
 
-  const topupRows = db.prepare(`
-    SELECT * FROM voucher_topups WHERE voucher_id = ?
-    AND CAST(strftime('%m', date) AS INTEGER) = ? AND CAST(strftime('%Y', date) AS INTEGER) = ?
-  `).all(voucherId, m, y);
+  const { data: topupRows } = await supabase
+    .from('voucher_topups')
+    .select('*')
+    .eq('voucher_id', voucherId)
+    .gte('date', startDate)
+    .lt('date', endDate);
 
-  const totalUsage = usageRows.reduce((s, r) => s + r.amount, 0);
-  const totalTopups = topupRows.reduce((s, r) => s + r.amount, 0);
-  const manualTopups = topupRows.filter(r => r.source === 'manual').reduce((s, r) => s + r.amount, 0);
+  const totalUsage = (usageRows || []).reduce((s, r) => s + r.amount, 0);
+  const totalTopups = (topupRows || []).reduce((s, r) => s + r.amount, 0);
+  const manualTopups = (topupRows || []).filter(r => r.source === 'manual').reduce((s, r) => s + r.amount, 0);
 
-  const deleteAll = db.transaction(() => {
-    db.prepare(`
-      DELETE FROM voucher_usage WHERE voucher_id = ?
-      AND CAST(strftime('%m', date) AS INTEGER) = ? AND CAST(strftime('%Y', date) AS INTEGER) = ?
-    `).run(voucherId, m, y);
-    db.prepare(`
-      DELETE FROM voucher_topups WHERE voucher_id = ?
-      AND CAST(strftime('%m', date) AS INTEGER) = ? AND CAST(strftime('%Y', date) AS INTEGER) = ?
-    `).run(voucherId, m, y);
-    db.prepare('UPDATE vouchers SET remaining_amount = remaining_amount + ? - ?, initial_amount = initial_amount - ? WHERE id = ?')
-      .run(totalUsage, totalTopups, manualTopups, voucherId);
-  });
-  deleteAll();
+  await supabase
+    .from('voucher_usage')
+    .delete()
+    .eq('voucher_id', voucherId)
+    .gte('date', startDate)
+    .lt('date', endDate);
 
-  res.json({ success: true, deletedUsage: usageRows.length, deletedTopups: topupRows.length });
+  await supabase
+    .from('voucher_topups')
+    .delete()
+    .eq('voucher_id', voucherId)
+    .gte('date', startDate)
+    .lt('date', endDate);
+
+  const { data: voucher } = await supabase
+    .from('vouchers')
+    .select('remaining_amount, initial_amount')
+    .eq('id', voucherId)
+    .single();
+
+  await supabase
+    .from('vouchers')
+    .update({
+      remaining_amount: voucher.remaining_amount + totalUsage - totalTopups,
+      initial_amount: voucher.initial_amount - manualTopups,
+    })
+    .eq('id', voucherId);
+
+  res.json({ success: true, deletedUsage: (usageRows || []).length, deletedTopups: (topupRows || []).length });
 });
 
-router.delete('/:id', (req, res) => {
-  const db = getDb();
-  db.prepare('DELETE FROM voucher_usage WHERE voucher_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM voucher_topups WHERE voucher_id = ?').run(req.params.id);
-  db.prepare('UPDATE transactions SET is_voucher_purchase = 0, voucher_id = NULL WHERE voucher_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM vouchers WHERE id = ?').run(req.params.id);
+router.delete('/:id', async (req, res) => {
+  await supabase.from('voucher_usage').delete().eq('voucher_id', req.params.id);
+  await supabase.from('voucher_topups').delete().eq('voucher_id', req.params.id);
+  await supabase
+    .from('transactions')
+    .update({ is_voucher_purchase: false, voucher_id: null })
+    .eq('voucher_id', req.params.id);
+  await supabase.from('vouchers').delete().eq('id', req.params.id);
   res.json({ success: true });
 });
 

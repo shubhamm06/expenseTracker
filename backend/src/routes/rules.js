@@ -1,78 +1,99 @@
 import { Router } from 'express';
-import { getDb } from '../models/db.js';
+import { supabase } from '../models/supabase.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
-  const rules = db.prepare(`
-    SELECT r.*, c.name as category_name, c.color as category_color
-    FROM rules r
-    JOIN categories c ON r.category_id = c.id
-    ORDER BY r.pattern
-  `).all();
+router.get('/', async (req, res) => {
+  const { data, error } = await supabase
+    .from('rules')
+    .select('*, categories(name, color)')
+    .order('pattern');
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const rules = data.map(r => ({
+    id: r.id,
+    pattern: r.pattern,
+    category_id: r.category_id,
+    category_name: r.categories?.name,
+    category_color: r.categories?.color,
+  }));
   res.json(rules);
 });
 
-router.post('/', (req, res) => {
-  const db = getDb();
+router.post('/', async (req, res) => {
   const { pattern, category_id } = req.body;
-  const result = db.prepare('INSERT INTO rules (pattern, category_id) VALUES (?, ?)').run(pattern.toLowerCase(), category_id);
-  res.status(201).json({ id: result.lastInsertRowid });
+  const { data, error } = await supabase
+    .from('rules')
+    .insert({ pattern: pattern.toLowerCase(), category_id })
+    .select('id')
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json({ id: data.id });
 });
 
-router.delete('/:id', (req, res) => {
-  const db = getDb();
-  db.prepare('DELETE FROM rules WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
-});
-
-router.patch('/:id', (req, res) => {
-  const db = getDb();
+router.patch('/:id', async (req, res) => {
   const { pattern, category_id } = req.body;
-  const rule = db.prepare('SELECT * FROM rules WHERE id = ?').get(req.params.id);
+
+  const { data: rule } = await supabase
+    .from('rules')
+    .select('*')
+    .eq('id', req.params.id)
+    .single();
+
   if (!rule) return res.status(404).json({ error: 'Not found' });
 
-  if (pattern !== undefined) {
-    db.prepare('UPDATE rules SET pattern = ? WHERE id = ?').run(pattern.toLowerCase(), req.params.id);
-  }
-  if (category_id !== undefined) {
-    db.prepare('UPDATE rules SET category_id = ? WHERE id = ?').run(category_id, req.params.id);
-  }
+  const updates = {};
+  if (pattern !== undefined) updates.pattern = pattern.toLowerCase();
+  if (category_id !== undefined) updates.category_id = category_id;
+
+  await supabase.from('rules').update(updates).eq('id', req.params.id);
   res.json({ success: true });
 });
 
-router.post('/apply', (req, res) => {
-  const db = getDb();
-  const rules = db.prepare('SELECT * FROM rules').all();
+router.delete('/:id', async (req, res) => {
+  const { error } = await supabase
+    .from('rules')
+    .delete()
+    .eq('id', req.params.id);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+router.post('/apply', async (req, res) => {
+  const { data: rules } = await supabase.from('rules').select('*');
+
+  const { data: eligible } = await supabase
+    .from('transactions')
+    .select('*')
+    .or('category_id.is.null,category_source.eq.rule');
+
   let applied = 0;
 
-  // Find the Payments category (excluded from totals but not marked as not-mine)
-  const paymentsCategory = db.prepare("SELECT id FROM categories WHERE name = 'Payments'").get();
-  const paymentsCatId = paymentsCategory ? paymentsCategory.id : null;
-
-  const eligible = db.prepare("SELECT * FROM transactions WHERE category_id IS NULL OR category_source = 'rule'").all();
-  const updateStmt = db.prepare("UPDATE transactions SET category_id = ?, category_source = 'rule' WHERE id = ?");
-
-
-  for (const txn of eligible) {
+  for (const txn of eligible || []) {
     const desc = txn.description.toLowerCase();
     let matched = false;
-    for (const rule of rules) {
+    for (const rule of rules || []) {
       const patterns = rule.pattern.split(',').map(p => p.trim()).filter(Boolean);
       if (patterns.some(p => desc.includes(p))) {
         if (txn.category_id !== rule.category_id) {
-          updateStmt.run(rule.category_id, txn.id);
+          await supabase
+            .from('transactions')
+            .update({ category_id: rule.category_id, category_source: 'rule' })
+            .eq('id', txn.id);
           applied++;
         }
-
         matched = true;
         break;
       }
     }
     if (!matched && txn.category_id !== null && txn.category_source === 'rule') {
-      db.prepare("UPDATE transactions SET category_id = NULL, category_source = NULL WHERE id = ?").run(txn.id);
-
+      await supabase
+        .from('transactions')
+        .update({ category_id: null, category_source: null })
+        .eq('id', txn.id);
       applied++;
     }
   }
