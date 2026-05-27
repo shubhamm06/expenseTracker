@@ -85,11 +85,11 @@ router.get('/oauth/google/callback', async (req, res) => {
   const userId = state || req.userId;
 
   if (error) {
-    return res.redirect('http://localhost:5173/settings?error=' + encodeURIComponent(error));
+    return res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?error=' + encodeURIComponent(error));
   }
 
   if (!code || !userId) {
-    return res.redirect('http://localhost:5173/settings?error=no_code');
+    return res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?error=no_code');
   }
 
   try {
@@ -144,10 +144,10 @@ router.get('/oauth/google/callback', async (req, res) => {
       }
     }
 
-    res.redirect('http://localhost:5173/settings?success=connected&email=' + encodeURIComponent(email));
+    res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?success=connected&email=' + encodeURIComponent(email));
   } catch (err) {
     console.error('[OAuth] Token exchange failed:', err.message);
-    res.redirect('http://localhost:5173/settings?error=' + encodeURIComponent(err.message));
+    res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?error=' + encodeURIComponent(err.message));
   }
 });
 

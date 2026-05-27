@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { useLoading } from '../components/LoadingBar';
 import { supabase } from '../lib/supabase';
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 export function useFetchInterceptor() {
   const { increment, decrement } = useLoading();
 
@@ -9,8 +11,14 @@ export function useFetchInterceptor() {
     const originalFetch = window.fetch;
 
     window.fetch = async function (...args) {
-      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+      let url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
       if (!url.includes('/api/')) return originalFetch.apply(this, args);
+
+      // Prefix with API base URL for production
+      if (API_BASE && url.startsWith('/api/')) {
+        url = API_BASE + url;
+        args[0] = url;
+      }
 
       increment();
 
