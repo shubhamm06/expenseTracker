@@ -1,11 +1,12 @@
 services:
   - type: web
     name: expense-tracker-api
-    runtime: node
+    runtime: docker
     rootDir: backend
-    buildCommand: apt-get update && apt-get install -y qpdf && npm install
-    startCommand: node src/index.js
+    dockerfilePath: ./Dockerfile
     envVars:
+      - key: PORT
+        value: "10000"
       - key: NODE_ENV
         value: production
       - key: SUPABASE_URL
