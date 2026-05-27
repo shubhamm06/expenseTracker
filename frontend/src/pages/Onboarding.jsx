@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../lib/api';
 
 export default function Onboarding() {
-  const { user, completeSetup } = useAuth();
+  const { user, completeSetup, signOut } = useAuth();
   const [name, setName] = useState(user?.user_metadata?.full_name || '');
   const [dob, setDob] = useState('');
   const [pan, setPan] = useState('');
@@ -92,6 +92,14 @@ export default function Onboarding() {
             {loading ? 'Setting up...' : 'Get Started'}
           </button>
         </form>
+
+        <button
+          onClick={signOut}
+          className="w-full mt-4"
+          style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.8rem', cursor: 'pointer', padding: '0.5rem' }}
+        >
+          Sign out and use a different account
+        </button>
       </div>
     </div>
   );

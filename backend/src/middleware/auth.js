@@ -1,8 +1,21 @@
 import { supabase } from '../models/supabase.js';
 
+const PUBLIC_PATHS = [
+  '/settings/oauth/google/callback',
+];
+
+const PUBLIC_PATTERNS = [
+  /^\/upload\/files\/[^/]+\/view$/,
+  /^\/upload\/files\/[^/]+\/download$/,
+];
+
 export async function requireAuth(req, res, next) {
-  // Skip auth for OAuth callbacks (browser redirect, no token available)
-  if (req.path.includes('/oauth/') && req.path.includes('/callback')) {
+  if (PUBLIC_PATHS.some(p => req.path === p || req.originalUrl.includes(p))) {
+    return next();
+  }
+
+  const apiPath = req.originalUrl.replace(/^\/api/, '').split('?')[0];
+  if (PUBLIC_PATTERNS.some(p => p.test(apiPath))) {
     return next();
   }
 

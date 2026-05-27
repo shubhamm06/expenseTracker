@@ -64,11 +64,11 @@ async function storeFile(req) {
       storage_path: storagePath,
       user_id: req.userId,
     })
-    .select('id')
+    .select('id, public_id')
     .single();
 
   if (error) throw new Error(error.message);
-  return data.id;
+  return { id: data.id, publicId: data.public_id };
 }
 
 async function importTransactions(rows, source, userId) {
@@ -214,7 +214,7 @@ router.get('/files', async (req, res) => {
 
   let query = supabase
     .from('uploaded_files')
-    .select('id, original_name, mime_type, size, status, status_message, transactions_imported, source_type, detected_source, skipped_transactions, uploaded_at')
+    .select('id, public_id, original_name, mime_type, size, status, status_message, transactions_imported, source_type, detected_source, skipped_transactions, uploaded_at')
     .eq('user_id', req.userId)
     .order('uploaded_at', { ascending: false })
     .limit(Math.min(Math.max(parseInt(qLimit) || 100, 1), 500));
@@ -310,8 +310,7 @@ router.get('/files/:id/download', async (req, res) => {
   const { data: file } = await supabase
     .from('uploaded_files')
     .select('original_name, mime_type, storage_path')
-    .eq('id', req.params.id)
-    .eq('user_id', req.userId)
+    .eq('public_id', req.params.id)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -332,8 +331,7 @@ router.get('/files/:id/view', async (req, res) => {
   const { data: file } = await supabase
     .from('uploaded_files')
     .select('original_name, mime_type, storage_path')
-    .eq('id', req.params.id)
-    .eq('user_id', req.userId)
+    .eq('public_id', req.params.id)
     .single();
 
   if (!file) return res.status(404).json({ error: 'File not found' });
@@ -382,11 +380,11 @@ router.patch('/files/:id/status', async (req, res) => {
 router.post('/preview', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  const fileId = await storeFile(req);
+  const { id: fileId, publicId } = await storeFile(req);
   const isPdf = req.file.originalname.toLowerCase().endsWith('.pdf') || req.file.mimetype === 'application/pdf';
 
   if (isPdf) {
-    return handlePdfPreview(req, res, fileId);
+    return handlePdfPreview(req, res, fileId, publicId);
   }
 
   const content = readFileSync(req.file.path, 'utf-8');
@@ -397,10 +395,10 @@ router.post('/preview', upload.single('file'), async (req, res) => {
   const columns = Object.keys(records[0]);
   const preview = records.slice(0, 5);
 
-  res.json({ type: 'csv', columns, preview, total_rows: records.length, file_path: req.file.path, file_id: fileId });
+  res.json({ type: 'csv', columns, preview, total_rows: records.length, file_path: req.file.path, file_id: fileId, public_id: publicId });
 });
 
-async function handlePdfPreview(req, res, fileId) {
+async function handlePdfPreview(req, res, fileId, publicId) {
   const password = req.body?.password || null;
 
   try {
@@ -423,6 +421,7 @@ async function handlePdfPreview(req, res, fileId) {
         total_rows: 0,
         file_path: req.file.path,
         file_id: fileId,
+        public_id: publicId,
         detected_source: detectedSource,
         message: 'Could not auto-detect transactions. You may need to review the extracted text.',
       });
@@ -435,6 +434,7 @@ async function handlePdfPreview(req, res, fileId) {
       total_rows: transactions.length,
       file_path: req.file.path,
       file_id: fileId,
+      public_id: publicId,
       all_transactions: transactions,
       detected_source: detectedSource,
     });

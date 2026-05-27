@@ -11,6 +11,7 @@ export default function Upload() {
   const [useSeparateAmountCols, setUseSeparateAmountCols] = useState(false);
   const [pdfFilePath, setPdfFilePath] = useState('');
   const [fileId, setFileId] = useState(null);
+  const [publicId, setPublicId] = useState(null);
   const [password, setPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [pdfTransactions, setPdfTransactions] = useState([]);
@@ -127,6 +128,7 @@ export default function Upload() {
       if (res.status === 401 && data.error === 'PASSWORD_REQUIRED') {
         setPdfFilePath(data.file_path);
         setFileId(data.file_id);
+        setPublicId(data.public_id);
         setStep('password');
         setLoading(false);
         return;
@@ -147,6 +149,7 @@ export default function Upload() {
       }
 
       setFileId(data.file_id);
+      setPublicId(data.public_id);
       if (data.type === 'pdf') {
         handlePdfResponse(data);
       } else {
@@ -422,9 +425,9 @@ export default function Upload() {
           <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
             {pdfSelected.size} of {pdfTransactions.length} transactions selected
           </p>
-          {fileId && (
+          {publicId && (
             <a
-              href={`/api/upload/files/${fileId}/view`}
+              href={`/api/upload/files/${publicId}/view`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors"
@@ -874,7 +877,7 @@ export default function Upload() {
                         </button>
                       )}
                       <a
-                        href={`/api/upload/files/${f.id}/view`}
+                        href={`/api/upload/files/${f.public_id}/view`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="p-1.5 rounded-lg hover:bg-[var(--surface)] transition-colors"
@@ -885,7 +888,7 @@ export default function Upload() {
                         </svg>
                       </a>
                       <a
-                        href={`/api/upload/files/${f.id}/download`}
+                        href={`/api/upload/files/${f.public_id}/download`}
                         className="p-1.5 rounded-lg hover:bg-[var(--surface)] transition-colors"
                         title="Download file"
                       >
@@ -967,7 +970,7 @@ export default function Upload() {
               {reviewFile.detected_source && ` · Detected: ${reviewFile.detected_source}`}
             </p>
             <a
-              href={`/api/upload/files/${reviewFile.id}/view`}
+              href={`/api/upload/files/${reviewFile.public_id}/view`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors shrink-0"

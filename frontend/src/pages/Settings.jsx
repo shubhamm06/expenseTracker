@@ -290,11 +290,11 @@ export default function Settings() {
       {/* Cards Section */}
       <section>
         {cards.length === 0 && accounts.length > 0 && (
-          <div className="flex items-center gap-2 px-4 py-3 mb-3 rounded-lg" style={{ background: 'var(--amber-soft)', border: '1px solid var(--border)' }}>
-            <svg className="w-4 h-4 shrink-0" style={{ color: 'var(--amber)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <div className="flex items-center gap-2 px-4 py-3 mb-3 rounded-lg" style={{ background: 'var(--danger-soft)', border: '1px solid var(--danger)', borderColor: 'rgba(185, 28, 28, 0.3)' }}>
+            <svg className="w-4 h-4 shrink-0" style={{ color: 'var(--danger)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
             </svg>
-            <p className="text-sm italic" style={{ color: 'var(--amber)' }}>
+            <p className="text-sm font-medium" style={{ color: 'var(--danger)' }}>
               Add at least one card to enable statement sync. Card details are needed to unlock encrypted PDF statements.
             </p>
           </div>
