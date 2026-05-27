@@ -32,9 +32,9 @@ export default function Settings() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Poll sync status every 5 seconds while any sync is running
+  // Poll sync status every 15 seconds while any sync is running
   useEffect(() => {
-    const anySyncing = accounts.some(a => a.sync_running);
+    const anySyncing = accounts.some(a => a.sync_running || a.amazon_pay_sync_running);
     if (!anySyncing) return;
 
     const interval = setInterval(() => {
@@ -42,7 +42,7 @@ export default function Settings() {
       fetchAccounts();
       fetchPendingReviewCount();
       fetchSyncThrottle();
-    }, 5000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [accounts]);

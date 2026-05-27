@@ -372,9 +372,9 @@ export default function Transactions() {
             return (
               <div key={sourceName} className="rounded-xl overflow-hidden" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
                 {/* Source Header */}
-                <div className="flex items-center justify-between px-4 py-3"
+                <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-3"
                   style={{ background: 'var(--table-header-bg)', borderBottom: isCollapsed ? 'none' : '1px solid var(--border)' }}>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
                     <button
                       onClick={() => toggleCollapse(sourceName)}
                       className="w-6 h-6 rounded-md flex items-center justify-center transition-all hover:bg-[var(--surface)]"
@@ -449,53 +449,55 @@ export default function Transactions() {
                       </span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
                       <button
                         onClick={() => setAddingSource(sourceName)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all hover:opacity-80"
+                        className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-all hover:opacity-80"
                         style={{ color: 'var(--success)', background: 'var(--success-soft)', border: '1px solid var(--border)' }}
                         title={`Add a manual transaction to ${sourceName}`}
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                         </svg>
-                        Add
+                        <span className="hidden sm:inline">Add</span>
                       </button>
                       <button
                         onClick={() => confirmDownload(sourceName)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all hover:opacity-80"
+                        className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-all hover:opacity-80"
                         style={{ color: 'var(--accent)', background: 'var(--accent-soft)', border: '1px solid var(--border)' }}
                         title={`Download source file for ${sourceName}`}
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
                         </svg>
-                        Download
+                        <span className="hidden sm:inline">Download</span>
                       </button>
                       <button
                         onClick={() => confirmDeleteSource(sourceName, group.length)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all hover:opacity-80"
+                        className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-all hover:opacity-80"
                         style={{ color: 'var(--danger)', background: 'var(--danger-soft, rgba(239,68,68,0.08))', border: '1px solid var(--border)' }}
                         title={`Delete all transactions from ${sourceName}`}
                       >
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
                         </svg>
-                        Delete
+                        <span className="hidden sm:inline">Delete</span>
                       </button>
                     </div>
                   )}
                 </div>
 
                 {!isCollapsed && <>
+                {/* Scrollable Table */}
+                <div className="overflow-x-auto">
                 {/* Table Header */}
-                <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[80px_1fr_130px_140px_56px] gap-2 sm:gap-3 px-3 sm:px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
+                <div className="grid grid-cols-[70px_minmax(150px,1fr)_100px_130px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[540px]"
                   style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
                   <span>Date</span>
                   <span>Description</span>
                   <span>Amount</span>
-                  <span className="hidden sm:block">Category</span>
-                  <span className="hidden sm:block">Not Mine</span>
+                  <span>Category</span>
+                  <span>Not Mine</span>
                 </div>
 
                 {/* Transaction Rows */}
@@ -510,7 +512,7 @@ export default function Transactions() {
                     <div
                       key={t.id}
                       onDoubleClick={() => setEditingTransaction({ ...t })}
-                      className="px-4 py-3 group transition-colors duration-150 animate-slide-in cursor-pointer"
+                      className="px-4 py-3 group transition-colors duration-150 animate-slide-in cursor-pointer min-w-[540px]"
                       style={{
                         animationDelay: `${Math.min(idx * 20, 400)}ms`,
                         background: rowBg,
@@ -518,7 +520,7 @@ export default function Transactions() {
                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--table-row-hover)'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}
                     >
-                      <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[80px_1fr_130px_140px_56px] gap-2 sm:gap-3 items-center">
+                      <div className="grid grid-cols-[70px_minmax(150px,1fr)_100px_130px_56px] gap-3 items-center">
                       <span
                         className="text-xs font-medium tabular-nums"
                         style={{ fontFamily: 'var(--font-mono)', color: isStrikethrough ? 'var(--text-muted)' : 'var(--text-secondary)' }}
@@ -552,7 +554,7 @@ export default function Transactions() {
                         value={t.category_id || ''}
                         onChange={e => updateCategory(t.id, Number(e.target.value) || null)}
                         onDoubleClick={e => e.stopPropagation()}
-                        className="hidden sm:block text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all truncate"
+                        className="text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all truncate"
                         style={{
                           background: t.category_color ? t.category_color + '18' : 'var(--input-bg)',
                           border: `1px solid ${t.category_color ? t.category_color + '40' : 'var(--border)'}`,
@@ -566,7 +568,7 @@ export default function Transactions() {
                         ))}
                       </select>
 
-                      <div className="hidden sm:flex justify-center">
+                      <div className="flex justify-center">
                         {isPayment ? (
                           <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--empty-icon-bg)', color: 'var(--text-muted)', opacity: 0.4 }} title="Excluded from totals (Payment)">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -592,7 +594,7 @@ export default function Transactions() {
                       </div>
                       </div>
                       {t.notes && (
-                        <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[80px_1fr_130px_140px_56px] gap-2 sm:gap-3 -mt-0.5">
+                        <div className="grid grid-cols-[70px_minmax(150px,1fr)_100px_130px_56px] gap-3 -mt-0.5 min-w-[540px]">
                           <span></span>
                           <span></span>
                           <span className="text-xs italic pr-3 text-right" style={{ color: 'var(--text-muted)' }}>
@@ -603,6 +605,7 @@ export default function Transactions() {
                     </div>
                     );
                   })}
+                </div>
                 </div>
 
                 {/* Source Footer */}
