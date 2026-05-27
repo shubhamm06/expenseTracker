@@ -8,6 +8,7 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [serverDown, setServerDown] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -37,15 +38,26 @@ export function AuthProvider({ children }) {
   }, []);
 
   async function checkProfile(token) {
-    try {
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await res.json();
-      setNeedsSetup(data.needs_setup);
-    } catch {
-      setNeedsSetup(true);
+    const maxDuration = 90000;
+    const interval = 4000;
+    const start = Date.now();
+
+    while (Date.now() - start < maxDuration) {
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setNeedsSetup(data.needs_setup);
+          setLoading(false);
+          return;
+        }
+      } catch {}
+      await new Promise(r => setTimeout(r, interval));
     }
+
+    setServerDown(true);
     setLoading(false);
   }
 
@@ -91,7 +103,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, needsSetup, signInWithEmail, signUpWithEmail, resetPassword, signInWithGoogle, signOut, completeSetup }}>
+    <AuthContext.Provider value={{ user, session, loading, needsSetup, serverDown, signInWithEmail, signUpWithEmail, resetPassword, signInWithGoogle, signOut, completeSetup }}>
       {children}
     </AuthContext.Provider>
   );

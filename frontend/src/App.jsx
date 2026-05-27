@@ -54,21 +54,60 @@ function App() {
 
 function AuthGate() {
   useFetchInterceptor();
-  const { user, loading, needsSetup } = useAuth();
+  const { user, loading, needsSetup, serverDown } = useAuth();
 
-  if (loading) {
-    return (
-      <div className="login-page">
-        <div className="login-card">
-          <p style={{ color: 'var(--text-secondary)' }}>Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
+  if (loading) return <ColdStartScreen />;
+  if (serverDown) return <ServerDownScreen />;
   if (!user) return <Login />;
   if (needsSetup) return <Onboarding />;
   return <AppShell />;
+}
+
+function ColdStartScreen() {
+  const [showMsg, setShowMsg] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowMsg(true), 3000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="login-scene">
+      <div className="login-bg-gradient" />
+      <div className="cold-start-card">
+        <div className="cold-start-spinner" />
+        <p className="cold-start-title">{showMsg ? 'Thamba Thamba, server starting up.' : 'Connecting...'}</p>
+        {showMsg && (
+          <div className="cold-start-msg">
+            <p>Takes some time because you are not paying, so stay happy xD</p>
+            <p className="cold-start-sub">60 seconds is all it takes.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ServerDownScreen() {
+  return (
+    <div className="login-scene">
+      <div className="login-bg-gradient" />
+      <div className="cold-start-card">
+        <span style={{ fontSize: '2.5rem', display: 'block', marginBottom: '1rem' }}>💀</span>
+        <p className="cold-start-title">Ohh noo, server crashed.</p>
+        <div className="cold-start-msg">
+          <p>But it's fine because you are not paying me. hehe</p>
+        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="login-submit"
+          style={{ marginTop: '1.25rem' }}
+        >
+          Try Again
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function AppShell() {
