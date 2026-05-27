@@ -554,7 +554,8 @@ export default function Vouchers() {
             </div>
           ) : (<>
             {/* Table Header */}
-            <div className="grid grid-cols-[80px_1fr_130px_120px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
+            <div className="overflow-x-auto">
+            <div className="grid grid-cols-[80px_1fr_130px_120px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[520px]"
               style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
               <span>Date</span>
               <span className="text-left">Description</span>
@@ -564,7 +565,7 @@ export default function Vouchers() {
             </div>
 
             {/* Activity Rows */}
-            <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '480px' }}>
+            <div className="transaction-rows overflow-y-auto min-w-[520px]" style={{ maxHeight: '480px' }}>
               {[
                 ...usage.map(u => ({ ...u, _type: 'usage' })),
                 ...topups.map(t => ({ ...t, _type: 'topup' })),
@@ -685,6 +686,7 @@ export default function Vouchers() {
                 </div>
               );
             })()}
+          </div>
           </>)}
         </div>
       )}

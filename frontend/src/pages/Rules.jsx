@@ -255,13 +255,14 @@ export default function Rules() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-[1fr_160px_60px] gap-3 px-5 py-3 text-xs font-semibold uppercase tracking-wider"
+            <div className="overflow-x-auto">
+            <div className="grid grid-cols-[1fr_160px_60px] gap-3 px-5 py-3 text-xs font-semibold uppercase tracking-wider min-w-[400px]"
               style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-muted)', background: 'var(--table-header-bg)' }}>
               <span>Pattern</span>
               <span>Category</span>
               <span />
             </div>
-            <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '500px' }}>
+            <div className="transaction-rows overflow-y-auto min-w-[400px]" style={{ maxHeight: '500px' }}>
               {rules.map((rule, idx) => {
                 const rowBg = idx % 2 === 1 ? 'var(--row-stripe)' : 'transparent';
                 return (
@@ -313,6 +314,7 @@ export default function Rules() {
             </div>
             <div className="px-5 py-2.5 border-t text-xs" style={{ borderColor: 'var(--border)', color: 'var(--text-muted)', background: 'var(--table-header-bg)' }}>
               {rules.length} rule{rules.length !== 1 ? 's' : ''} configured
+            </div>
             </div>
           </>
         )}

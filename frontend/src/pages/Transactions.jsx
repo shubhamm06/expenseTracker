@@ -491,7 +491,7 @@ export default function Transactions() {
                 {/* Scrollable Table */}
                 <div className="overflow-x-auto">
                 {/* Table Header */}
-                <div className="grid grid-cols-[70px_minmax(150px,1fr)_100px_130px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[540px]"
+                <div className="grid grid-cols-[70px_180px_100px_140px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[580px]"
                   style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
                   <span>Date</span>
                   <span>Description</span>
@@ -512,7 +512,7 @@ export default function Transactions() {
                     <div
                       key={t.id}
                       onDoubleClick={() => setEditingTransaction({ ...t })}
-                      className="px-4 py-3 group transition-colors duration-150 animate-slide-in cursor-pointer min-w-[540px]"
+                      className="group transition-colors duration-150 animate-slide-in cursor-pointer min-w-[580px]"
                       style={{
                         animationDelay: `${Math.min(idx * 20, 400)}ms`,
                         background: rowBg,
@@ -520,7 +520,7 @@ export default function Transactions() {
                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--table-row-hover)'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}
                     >
-                      <div className="grid grid-cols-[70px_minmax(150px,1fr)_100px_130px_56px] gap-3 items-center">
+                      <div className="grid grid-cols-[70px_180px_100px_140px_56px] gap-3 px-4 py-3 items-center">
                       <span
                         className="text-xs font-medium tabular-nums"
                         style={{ fontFamily: 'var(--font-mono)', color: isStrikethrough ? 'var(--text-muted)' : 'var(--text-secondary)' }}
@@ -594,7 +594,7 @@ export default function Transactions() {
                       </div>
                       </div>
                       {t.notes && (
-                        <div className="grid grid-cols-[70px_minmax(150px,1fr)_100px_130px_56px] gap-3 -mt-0.5 min-w-[540px]">
+                        <div className="grid grid-cols-[70px_180px_100px_140px_56px] gap-3 -mt-0.5 min-w-[580px]">
                           <span></span>
                           <span></span>
                           <span className="text-xs italic pr-3 text-right" style={{ color: 'var(--text-muted)' }}>
