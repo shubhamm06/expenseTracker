@@ -70,6 +70,7 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
     });
 
     let sinceDate;
+    let effectivePeriod = syncPeriod || null;
     if (sinceDays) {
       sinceDate = new Date();
       sinceDate.setDate(sinceDate.getDate() - sinceDays);
@@ -90,7 +91,12 @@ export async function runAmazonPaySync(accountId, { sinceDays, triggerType = 'ma
       } else {
         sinceDate = new Date();
         sinceDate.setMonth(sinceDate.getMonth() - 2);
+        if (!effectivePeriod) effectivePeriod = '2m';
       }
+    }
+
+    if (effectivePeriod !== (syncPeriod || null)) {
+      await supabase.from('email_sync_jobs').update({ sync_period: effectivePeriod }).eq('id', jobId);
     }
 
     const voucher = await getOrCreateAmazonPayVoucher(account.user_id);
