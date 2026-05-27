@@ -8,6 +8,7 @@ const SILENT_ENDPOINTS = [
   '/api/auth/me',
   '/api/settings/sync-schedule',
   '/api/settings/sync-throttle',
+  '/api/settings/sync-jobs',
   '/api/settings/email-accounts',
   '/api/upload/files',
   '/api/vouchers/usage/auto-categorize',

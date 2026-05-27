@@ -28,12 +28,11 @@ export async function parsePdf(filePath, password) {
       targetPath = decryptedPath;
     } catch (err) {
       const stderr = err.stderr?.toString() || '';
-      if (stderr.includes('invalid password') || stderr.includes('password')) {
-        throw new Error('INVALID_PASSWORD');
-      }
-      // qpdf exits non-zero on warnings but may still produce a valid file
+      // Check for successful decryption with warnings FIRST (exit code 3)
       if (existsSync(decryptedPath) && stderr.includes('succeeded with warnings')) {
         targetPath = decryptedPath;
+      } else if (stderr.includes('invalid password')) {
+        throw new Error('INVALID_PASSWORD');
       } else {
         throw new Error('DECRYPT_FAILED: ' + (stderr || err.message));
       }
