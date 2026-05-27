@@ -520,14 +520,18 @@ async function processAttachment(attachment, passwords, jobId, userId, alreadySy
 }
 
 async function tryExtractWithPasswords(filePath, passwords, filename) {
+  console.log(`[Sync] Trying to extract: ${filename} (${passwords.length} passwords available)`);
   try {
     const { text } = await parsePdf(filePath, null);
     const detectedSource = extractSourceFromText(text);
+    console.log(`[Sync] ${filename} - not encrypted, opened directly`);
     return { text, detectedSource, usedPassword: null };
   } catch (err) {
     if (err.message !== 'PASSWORD_REQUIRED') {
+      console.error(`[Sync] ${filename} - unexpected error on no-password attempt: ${err.message}`);
       throw err;
     }
+    console.log(`[Sync] ${filename} - encrypted, trying passwords...`);
   }
 
   const filenameLower = filename.toLowerCase();
@@ -539,11 +543,14 @@ async function tryExtractWithPasswords(filePath, passwords, filename) {
   );
 
   const orderedPasswords = [...matchedPasswords, ...unmatchedPasswords];
+  console.log(`[Sync] ${filename} - ${matchedPasswords.length} source-matched, ${unmatchedPasswords.length} generic passwords`);
 
+  let lastError = null;
   for (const pwEntry of orderedPasswords) {
     try {
       const { text } = await parsePdf(filePath, pwEntry.password);
       const detectedSource = extractSourceFromText(text);
+      console.log(`[Sync] ${filename} - DECRYPTED with: ${pwEntry.password} (source: ${pwEntry.source_match || 'generic'})`);
 
       if (detectedSource && pwEntry.source_match) {
         const srcLower = detectedSource.toLowerCase();
@@ -554,10 +561,17 @@ async function tryExtractWithPasswords(filePath, passwords, filename) {
       }
 
       return { text, detectedSource, usedPassword: pwEntry };
-    } catch {
+    } catch (err) {
+      if (err.message !== 'INVALID_PASSWORD') {
+        lastError = err.message;
+        console.log(`[Sync] ${filename} - password "${pwEntry.password}" threw: ${err.message}`);
+      }
       continue;
     }
   }
+
+  console.log(`[Sync] ${filename} - ALL ${orderedPasswords.length} passwords failed${lastError ? ` (last non-password error: ${lastError})` : ''}`);
+
 
   return null;
 }

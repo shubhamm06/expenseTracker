@@ -25,15 +25,19 @@ export async function parsePdf(filePath, password) {
         filePath,
         decryptedPath,
       ]);
+      console.log(`[PDF] Decrypted successfully: ${filePath.split('/').pop()}`);
       targetPath = decryptedPath;
     } catch (err) {
       const stderr = err.stderr?.toString() || '';
-      // Check for successful decryption with warnings FIRST (exit code 3)
-      if (existsSync(decryptedPath) && stderr.includes('succeeded with warnings')) {
+      const exitCode = err.status;
+      const fileExists = existsSync(decryptedPath);
+      if (fileExists && stderr.includes('succeeded with warnings')) {
+        console.log(`[PDF] Decrypted with warnings (exit ${exitCode}): ${filePath.split('/').pop()}`);
         targetPath = decryptedPath;
       } else if (stderr.includes('invalid password')) {
         throw new Error('INVALID_PASSWORD');
       } else {
+        console.error(`[PDF] Decrypt failed (exit ${exitCode}): ${filePath.split('/').pop()} | fileExists=${fileExists} | stderr: ${stderr.substring(0, 200)}`);
         throw new Error('DECRYPT_FAILED: ' + (stderr || err.message));
       }
     }
