@@ -52,8 +52,8 @@ export async function runSyncForAccount(accountId, { sinceDays, triggerType = 'm
       sinceDate.setMonth(sinceDate.getMonth() - 2);
     }
 
-    const { data: cards } = await supabase.from('cards').select('*');
-    const { data: profile } = await supabase.from('user_profile').select('*').limit(1).single();
+    const { data: cards } = await supabase.from('cards').select('*').eq('user_id', account.user_id);
+    const { data: profile } = await supabase.from('user_profile').select('*').eq('user_id', account.user_id).single();
     const { generatePasswords } = await import('./passwordGenerator.js');
     const passwords = generatePasswords(cards || [], profile || {});
 

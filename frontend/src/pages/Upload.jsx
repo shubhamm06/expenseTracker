@@ -798,21 +798,21 @@ export default function Upload() {
           )}
 
           <div className="card overflow-hidden">
-            <div className="grid grid-cols-[90px_1fr_80px_80px_80px_100px] gap-2 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
+            <div className="grid grid-cols-[70px_1fr_60px_70px] sm:grid-cols-[90px_1fr_80px_80px_80px_100px] gap-2 px-3 sm:px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
               style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', background: 'var(--table-header-bg)', letterSpacing: '0.08em' }}>
               <span>Date</span>
               <span>File</span>
-              <span>Source</span>
+              <span className="hidden sm:block">Source</span>
               <span>Status</span>
-              <span>Imported</span>
-              <span>Actions</span>
+              <span className="hidden sm:block">Imported</span>
+              <span className="hidden sm:block">Actions</span>
             </div>
             <div className="transaction-rows overflow-y-auto" style={{ maxHeight: '400px' }}>
               {uploadedFiles.map((f, idx) => {
                 const isEmailPending = f.source_type === 'email' && f.status === 'pending';
                 return (<div key={f.id}>
                   <div
-                    className={`grid grid-cols-[90px_1fr_80px_80px_80px_100px] gap-2 px-4 py-3 items-center transition-colors ${isEmailPending ? 'cursor-pointer' : ''}`}
+                    className={`grid grid-cols-[70px_1fr_60px_70px] sm:grid-cols-[90px_1fr_80px_80px_80px_100px] gap-2 px-3 sm:px-4 py-3 items-center transition-colors ${isEmailPending ? 'cursor-pointer' : ''}`}
                     style={{
                       background: isEmailPending ? 'var(--accent-soft)' : (idx % 2 === 1 ? 'var(--row-stripe)' : 'transparent'),
                       borderLeft: isEmailPending ? '3px solid var(--accent)' : '3px solid transparent',
@@ -832,7 +832,7 @@ export default function Upload() {
                         {f.original_name}
                       </p>
                     </div>
-                    <div className="flex justify-center">
+                    <div className="hidden sm:flex justify-center">
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
                         style={{
                           background: f.source_type === 'email' ? 'var(--accent-soft)' : 'var(--surface)',
@@ -860,10 +860,10 @@ export default function Upload() {
                         </button>
                       )}
                     </div>
-                    <span className="text-xs text-center tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="hidden sm:block text-xs text-center tabular-nums" style={{ color: 'var(--text-secondary)' }}>
                       {f.transactions_imported}
                     </span>
-                    <div className="flex justify-center gap-1" onClick={e => e.stopPropagation()}>
+                    <div className="hidden sm:flex justify-center gap-1" onClick={e => e.stopPropagation()}>
                       {isEmailPending && (
                         <button
                           onClick={() => openReview(f)}

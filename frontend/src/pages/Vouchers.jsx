@@ -30,6 +30,7 @@ export default function Vouchers() {
       loadVouchers(),
       fetch('/api/categories').then(r => r.json()),
       fetch('/api/settings/sync-schedule').then(r => r.json()),
+      fetch('/api/vouchers/usage/auto-categorize', { method: 'POST' }),
     ]).then(([list, cats, schedule]) => {
       setCategories(cats);
       setSyncSchedule(schedule);
@@ -118,7 +119,7 @@ export default function Vouchers() {
     setSelectedVoucher(v);
     setShowTopup(false);
     setShowAddUsage(false);
-    await Promise.all([autoCategorizeUsage(), loadActivity(v.id)]);
+    await loadActivity(v.id);
   }
 
   async function autoCategorizeUsage() {

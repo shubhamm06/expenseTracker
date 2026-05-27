@@ -240,7 +240,7 @@ export default function Settings() {
           <div className="card">
             <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
               {accounts.map(a => (
-                <div key={a.id} className="px-4 py-3 flex items-center justify-between gap-4">
+                <div key={a.id} className="px-3 sm:px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{a.email}</p>

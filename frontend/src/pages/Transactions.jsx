@@ -207,7 +207,7 @@ export default function Transactions() {
   return (
     <div className="space-y-5 animate-fade-in-up">
       {/* Header */}
-      <div className="flex items-end justify-between flex-wrap gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
             Transactions
@@ -259,7 +259,7 @@ export default function Transactions() {
 
 
       {/* Overall Stats Bar */}
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
         <StatPill label="Transactions" value={transactions.length} />
         <StatPill label="Debit" value={formatCurrency(totalDebit)} variant="debit" />
         <StatPill label="Credit" value={formatCurrency(totalCredit)} variant="credit" />
@@ -267,7 +267,7 @@ export default function Transactions() {
         {reimbursableCount > 0 && (
           <StatPill label="Not Mine" value={reimbursableCount} muted />
         )}
-        <span className="text-xs italic ml-auto" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[10px] sm:text-xs italic ml-auto" style={{ color: 'var(--text-muted)' }}>
           * Excludes gift card &amp; payment transactions
         </span>
       </div>
@@ -489,13 +489,13 @@ export default function Transactions() {
 
                 {!isCollapsed && <>
                 {/* Table Header */}
-                <div className="grid grid-cols-[80px_1fr_130px_140px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
+                <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[80px_1fr_130px_140px_56px] gap-2 sm:gap-3 px-3 sm:px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center"
                   style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
                   <span>Date</span>
                   <span>Description</span>
                   <span>Amount</span>
-                  <span>Category</span>
-                  <span>Not Mine</span>
+                  <span className="hidden sm:block">Category</span>
+                  <span className="hidden sm:block">Not Mine</span>
                 </div>
 
                 {/* Transaction Rows */}
@@ -518,7 +518,7 @@ export default function Transactions() {
                       onMouseEnter={e => { e.currentTarget.style.background = 'var(--table-row-hover)'; }}
                       onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}
                     >
-                      <div className="grid grid-cols-[80px_1fr_130px_140px_56px] gap-3 items-center">
+                      <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[80px_1fr_130px_140px_56px] gap-2 sm:gap-3 items-center">
                       <span
                         className="text-xs font-medium tabular-nums"
                         style={{ fontFamily: 'var(--font-mono)', color: isStrikethrough ? 'var(--text-muted)' : 'var(--text-secondary)' }}
@@ -552,7 +552,7 @@ export default function Transactions() {
                         value={t.category_id || ''}
                         onChange={e => updateCategory(t.id, Number(e.target.value) || null)}
                         onDoubleClick={e => e.stopPropagation()}
-                        className="text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all truncate"
+                        className="hidden sm:block text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all truncate"
                         style={{
                           background: t.category_color ? t.category_color + '18' : 'var(--input-bg)',
                           border: `1px solid ${t.category_color ? t.category_color + '40' : 'var(--border)'}`,
@@ -566,7 +566,7 @@ export default function Transactions() {
                         ))}
                       </select>
 
-                      <div className="flex justify-center">
+                      <div className="hidden sm:flex justify-center">
                         {isPayment ? (
                           <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'var(--empty-icon-bg)', color: 'var(--text-muted)', opacity: 0.4 }} title="Excluded from totals (Payment)">
                             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -592,7 +592,7 @@ export default function Transactions() {
                       </div>
                       </div>
                       {t.notes && (
-                        <div className="grid grid-cols-[80px_1fr_130px_140px_56px] gap-3 -mt-0.5">
+                        <div className="grid grid-cols-[60px_1fr_90px] sm:grid-cols-[80px_1fr_130px_140px_56px] gap-2 sm:gap-3 -mt-0.5">
                           <span></span>
                           <span></span>
                           <span className="text-xs italic pr-3 text-right" style={{ color: 'var(--text-muted)' }}>

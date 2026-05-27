@@ -4,6 +4,13 @@ import { supabase } from '../lib/supabase';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
+const SILENT_ENDPOINTS = [
+  '/api/auth/me',
+  '/api/settings/sync-schedule',
+  '/api/settings/sync-throttle',
+  '/api/upload/files',
+];
+
 export function useFetchInterceptor() {
   const { increment, decrement } = useLoading();
 
@@ -20,7 +27,8 @@ export function useFetchInterceptor() {
         args[0] = url;
       }
 
-      increment();
+      const showLoading = !SILENT_ENDPOINTS.some(ep => url.includes(ep));
+      if (showLoading) increment();
 
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
@@ -33,7 +41,7 @@ export function useFetchInterceptor() {
       }
 
       return originalFetch.apply(this, args).finally(() => {
-        decrement();
+        if (showLoading) decrement();
       });
     };
 

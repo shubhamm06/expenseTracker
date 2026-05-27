@@ -61,7 +61,7 @@ export default function Dashboard() {
   return (
     <motion.div className="space-y-5" variants={container} initial="hidden" animate="show">
       {/* Header Row */}
-      <motion.div variants={item} className="flex items-end justify-between flex-wrap gap-3">
+      <motion.div variants={item} className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 sm:gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
             {getGreeting()}

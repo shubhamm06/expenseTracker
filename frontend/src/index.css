@@ -407,7 +407,15 @@ option {
   }
 
   .app-content {
-    padding: 1.5rem 1rem 2rem;
+    padding: 1rem 0.75rem 2rem;
+  }
+
+  .card {
+    border-radius: 0.75rem;
+  }
+
+  .transaction-rows {
+    max-height: 60vh !important;
   }
 }
 
