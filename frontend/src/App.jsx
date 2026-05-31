@@ -110,34 +110,7 @@ function ServerDownScreen() {
   );
 }
 
-function useServerWakeUp() {
-  useEffect(() => {
-    const WAKE_MINUTES = [355, 715, 1075, 1435];
-
-    function getNextWakeMs() {
-      const now = new Date();
-      const currentMin = now.getHours() * 60 + now.getMinutes();
-      for (const wakeMin of WAKE_MINUTES) {
-        if (wakeMin > currentMin) return (wakeMin - currentMin) * 60000;
-      }
-      return (1440 - currentMin + WAKE_MINUTES[0]) * 60000;
-    }
-
-    function scheduleWake() {
-      const ms = getNextWakeMs();
-      return setTimeout(() => {
-        fetch('/api/auth/me').catch(() => {});
-        timerId = scheduleWake();
-      }, ms);
-    }
-
-    let timerId = scheduleWake();
-    return () => clearTimeout(timerId);
-  }, []);
-}
-
 function AppShell() {
-  useServerWakeUp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
