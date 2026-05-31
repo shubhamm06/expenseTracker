@@ -22,6 +22,8 @@ app.use(cors({
 }));
 app.use(express.json());
 
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
+
 app.use('/api', requireAuth);
 
 app.use('/api/auth', authRouter);
