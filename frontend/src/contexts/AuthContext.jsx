@@ -11,10 +11,13 @@ export function AuthProvider({ children }) {
   const [serverDown, setServerDown] = useState(false);
 
   useEffect(() => {
+    let profileChecked = false;
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session) {
+        profileChecked = true;
         checkProfile(session.access_token);
       } else {
         setLoading(false);
@@ -27,6 +30,9 @@ export function AuthProvider({ children }) {
         setUser(session?.user ?? null);
         if (!session) {
           setLoading(false);
+        } else if (!profileChecked) {
+          profileChecked = true;
+          checkProfile(session.access_token);
         }
       }
     );
