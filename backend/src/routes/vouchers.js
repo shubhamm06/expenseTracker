@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { supabase } from '../models/supabase.js';
+import { cacheMiddleware, invalidateOnWrite } from '../middleware/cache.js';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', cacheMiddleware('vouchers', 120000), async (req, res) => {
   const { data, error } = await supabase
     .from('vouchers')
     .select('*')
@@ -14,7 +15,7 @@ router.get('/', async (req, res) => {
   res.json(data);
 });
 
-router.post('/', async (req, res) => {
+router.post('/', invalidateOnWrite(), async (req, res) => {
   const { name, initial_amount, purchase_date, source_transaction_id } = req.body;
 
   const { data, error } = await supabase
@@ -75,7 +76,7 @@ router.get('/:id/usage', async (req, res) => {
   res.json(usage);
 });
 
-router.post('/:id/usage', async (req, res) => {
+router.post('/:id/usage', invalidateOnWrite(), async (req, res) => {
   const { amount, date, description, category_id } = req.body;
   const voucherId = req.params.id;
 
@@ -140,7 +141,7 @@ router.get('/:id/topups', async (req, res) => {
   res.json(data);
 });
 
-router.post('/:id/topup', async (req, res) => {
+router.post('/:id/topup', invalidateOnWrite(), async (req, res) => {
   const { amount, date, description, source } = req.body;
   const voucherId = req.params.id;
 
@@ -192,7 +193,7 @@ router.post('/:id/topup', async (req, res) => {
   res.status(201).json({ id: data.id });
 });
 
-router.delete('/usage/:id', async (req, res) => {
+router.delete('/usage/:id', invalidateOnWrite(), async (req, res) => {
   const { data: entry } = await supabase
     .from('voucher_usage')
     .select('*')
@@ -216,7 +217,7 @@ router.delete('/usage/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-router.post('/usage/auto-categorize', async (req, res) => {
+router.post('/usage/auto-categorize', invalidateOnWrite(), async (req, res) => {
   const [{ data: rules }, { data: uncategorized }] = await Promise.all([
     supabase.from('rules').select('*').eq('user_id', req.userId),
     supabase.from('voucher_usage').select('*').eq('user_id', req.userId).or('category_id.is.null,category_source.eq.rule'),
@@ -246,7 +247,7 @@ router.post('/usage/auto-categorize', async (req, res) => {
   res.json({ applied });
 });
 
-router.patch('/usage/:id/category', async (req, res) => {
+router.patch('/usage/:id/category', invalidateOnWrite(), async (req, res) => {
   const { category_id } = req.body;
 
   const { data: entry } = await supabase
@@ -267,7 +268,7 @@ router.patch('/usage/:id/category', async (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/topup/:id', async (req, res) => {
+router.delete('/topup/:id', invalidateOnWrite(), async (req, res) => {
   const { data: entry } = await supabase
     .from('voucher_topups')
     .select('*')
@@ -295,7 +296,7 @@ router.delete('/topup/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/:id/clear-month', async (req, res) => {
+router.delete('/:id/clear-month', invalidateOnWrite(), async (req, res) => {
   const { month, year } = req.query;
   if (!month || !year) return res.status(400).json({ error: 'month and year are required' });
 
@@ -362,7 +363,7 @@ router.delete('/:id/clear-month', async (req, res) => {
   res.json({ success: true, deletedUsage: (usageRows || []).length, deletedTopups: (topupRows || []).length });
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', invalidateOnWrite(), async (req, res) => {
   const { data: voucher } = await supabase
     .from('vouchers')
     .select('name, is_protected')

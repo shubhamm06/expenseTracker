@@ -8,17 +8,17 @@ let amazonPayTask = null;
 const activeJobs = new Map();
 
 export function startScheduler() {
-  scheduledTask = cron.schedule('0 6 * * *', () => {
+  scheduledTask = cron.schedule('30 0 * * *', () => {
     console.log('[Scheduler] Email sync cron TRIGGERED at', new Date().toISOString());
     syncAllAccounts();
   });
-  console.log('[Scheduler] Email sync cron started (daily at 6 AM)');
+  console.log('[Scheduler] Email sync cron started (daily at 6:00 AM IST / 00:30 UTC)');
 
-  amazonPayTask = cron.schedule('0 */6 * * *', () => {
+  amazonPayTask = cron.schedule('30 0,6,12,18 * * *', () => {
     console.log('[Scheduler] Amazon Pay sync cron TRIGGERED at', new Date().toISOString());
     syncAllAmazonPay();
   });
-  console.log('[Scheduler] Amazon Pay sync cron started (every 6 hours)');
+  console.log('[Scheduler] Amazon Pay sync cron started (every 6 hours at IST 6am/12pm/6pm/12am)');
 }
 
 export function stopScheduler() {

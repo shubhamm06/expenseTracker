@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { supabase } from '../models/supabase.js';
+import { cacheMiddleware } from '../middleware/cache.js';
 
 const router = Router();
 
-router.get('/summary', async (req, res) => {
+router.get('/summary', cacheMiddleware(req => `dashboard:summary:${req.query.month || ''}:${req.query.year || ''}`), async (req, res) => {
   const { month, year } = req.query;
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
@@ -18,7 +19,7 @@ router.get('/summary', async (req, res) => {
   res.json(data);
 });
 
-router.get('/monthly-comparison', async (req, res) => {
+router.get('/monthly-comparison', cacheMiddleware('dashboard:monthly'), async (req, res) => {
   const { months = 6 } = req.query;
 
   const { data, error } = await supabase.rpc('get_monthly_comparison', {
@@ -30,7 +31,7 @@ router.get('/monthly-comparison', async (req, res) => {
   res.json(data);
 });
 
-router.get('/top-merchants', async (req, res) => {
+router.get('/top-merchants', cacheMiddleware(req => `dashboard:merchants:${req.query.month || ''}:${req.query.year || ''}`), async (req, res) => {
   const { month, year, limit = 8 } = req.query;
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
@@ -78,7 +79,7 @@ router.get('/top-merchants', async (req, res) => {
   res.json(merchants);
 });
 
-router.get('/source-breakdown', async (req, res) => {
+router.get('/source-breakdown', cacheMiddleware(req => `dashboard:sources:${req.query.month || ''}:${req.query.year || ''}`), async (req, res) => {
   const { month, year } = req.query;
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());

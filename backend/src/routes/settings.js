@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { google } from 'googleapis';
 import { supabase } from '../models/supabase.js';
 import { triggerSync, triggerAmazonPaySync, isSyncRunning, isAmazonPaySyncRunning } from '../services/syncScheduler.js';
+import { cacheMiddleware, invalidateOnWrite } from '../middleware/cache.js';
 
 const router = Router();
 
@@ -28,7 +29,7 @@ async function hasCards(userId) {
 
 const SYNC_THROTTLE_LIMITS = { '1m': 3, '2m': 2 };
 
-async function getSyncUsageToday(syncType, userId) {
+async function getSyncUsageToday(syncType) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -36,7 +37,6 @@ async function getSyncUsageToday(syncType, userId) {
     .from('email_sync_jobs')
     .select('sync_period')
     .eq('sync_type', syncType)
-    .eq('user_id', userId)
     .gte('started_at', today.toISOString())
     .in('sync_period', ['1m', '2m']);
 
@@ -71,7 +71,6 @@ router.get('/oauth/google/url', (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
-    state: req.userId,
     scope: [
       'https://mail.google.com/',
       'https://www.googleapis.com/auth/userinfo.email',
@@ -81,15 +80,14 @@ router.get('/oauth/google/url', (req, res) => {
 });
 
 router.get('/oauth/google/callback', async (req, res) => {
-  const { code, error, state } = req.query;
-  const userId = state || req.userId;
+  const { code, error } = req.query;
 
   if (error) {
-    return res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?error=' + encodeURIComponent(error));
+    return res.redirect('http://localhost:5173/settings?error=' + encodeURIComponent(error));
   }
 
-  if (!code || !userId) {
-    return res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?error=no_code');
+  if (!code) {
+    return res.redirect('http://localhost:5173/settings?error=no_code');
   }
 
   try {
@@ -105,7 +103,6 @@ router.get('/oauth/google/callback', async (req, res) => {
       .from('email_accounts')
       .select('id')
       .eq('email', email)
-      .eq('user_id', userId)
       .single();
 
     if (existing) {
@@ -120,7 +117,7 @@ router.get('/oauth/google/callback', async (req, res) => {
           error_message: null,
         })
         .eq('id', existing.id);
-      if (await hasCards(userId)) {
+      if (await hasCards(req.userId)) {
         triggerSync(existing.id, { triggerType: 'auto' });
       }
     } else {
@@ -135,25 +132,24 @@ router.get('/oauth/google/callback', async (req, res) => {
           access_token: tokens.access_token,
           token_expiry: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : null,
           display_name: data.name || email,
-          user_id: userId,
         })
         .select('id')
         .single();
-      if (await hasCards(userId)) {
+      if (await hasCards(req.userId)) {
         triggerSync(newAccount.id, { triggerType: 'auto' });
       }
     }
 
-    res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?success=connected&email=' + encodeURIComponent(email));
+    res.redirect('http://localhost:5173/settings?success=connected&email=' + encodeURIComponent(email));
   } catch (err) {
     console.error('[OAuth] Token exchange failed:', err.message);
-    res.redirect((process.env.FRONTEND_URL || 'http://localhost:5173') + '/settings?error=' + encodeURIComponent(err.message));
+    res.redirect('http://localhost:5173/settings?error=' + encodeURIComponent(err.message));
   }
 });
 
 // --- Email Accounts ---
 
-router.get('/email-accounts', async (req, res) => {
+router.get('/email-accounts', cacheMiddleware('email-accounts', 300000), async (req, res) => {
   const { data: accounts, error } = await supabase
     .from('email_accounts')
     .select('id, email, imap_host, imap_port, display_name, auth_type, amazon_pay_sync, status, last_sync_at, error_message, created_at')
@@ -171,7 +167,7 @@ router.get('/email-accounts', async (req, res) => {
   res.json(enriched);
 });
 
-router.post('/email-accounts', async (req, res) => {
+router.post('/email-accounts', invalidateOnWrite(), async (req, res) => {
   const { email, password, imap_host, imap_port, display_name } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
@@ -224,12 +220,11 @@ router.post('/email-accounts', async (req, res) => {
   });
 });
 
-router.delete('/email-accounts/:id', async (req, res) => {
+router.delete('/email-accounts/:id', invalidateOnWrite(), async (req, res) => {
   const { data: account } = await supabase
     .from('email_accounts')
     .select('id')
     .eq('id', req.params.id)
-    .eq('user_id', req.userId)
     .single();
 
   if (!account) return res.status(404).json({ error: 'Account not found' });
@@ -272,7 +267,7 @@ router.post('/email-accounts/:id/sync', async (req, res) => {
   }
 
   if (period && SYNC_THROTTLE_LIMITS[period]) {
-    const usage = await getSyncUsageToday('statement', req.userId);
+    const usage = await getSyncUsageToday('statement');
     if (usage[period] >= SYNC_THROTTLE_LIMITS[period]) {
       return res.status(429).json({ error: `Daily limit reached for "${period}" sync. Try again tomorrow.` });
     }
@@ -287,8 +282,8 @@ router.post('/email-accounts/:id/sync', async (req, res) => {
 
 router.get('/sync-throttle', async (req, res) => {
   const [stmtUsage, amzUsage] = await Promise.all([
-    getSyncUsageToday('statement', req.userId),
-    getSyncUsageToday('amazon_pay', req.userId),
+    getSyncUsageToday('statement'),
+    getSyncUsageToday('amazon_pay'),
   ]);
   res.json({
     statement: getRemainingAttempts(stmtUsage),
@@ -298,7 +293,7 @@ router.get('/sync-throttle', async (req, res) => {
 
 // --- Cards ---
 
-router.get('/cards', async (req, res) => {
+router.get('/cards', cacheMiddleware('cards', 300000), async (req, res) => {
   const { data, error } = await supabase
     .from('cards')
     .select('*')
@@ -309,7 +304,7 @@ router.get('/cards', async (req, res) => {
   res.json(data);
 });
 
-router.post('/cards', async (req, res) => {
+router.post('/cards', invalidateOnWrite(), async (req, res) => {
   const { bank, card_number } = req.body;
   if (!bank || !card_number) {
     return res.status(400).json({ error: 'bank and card_number are required' });
@@ -328,7 +323,7 @@ router.post('/cards', async (req, res) => {
   res.json(data);
 });
 
-router.patch('/cards/:id', async (req, res) => {
+router.patch('/cards/:id', invalidateOnWrite(), async (req, res) => {
   const { bank, card_number } = req.body;
 
   const updates = {};
@@ -342,7 +337,7 @@ router.patch('/cards/:id', async (req, res) => {
   res.json(data);
 });
 
-router.delete('/cards/:id', async (req, res) => {
+router.delete('/cards/:id', invalidateOnWrite(), async (req, res) => {
   const { data } = await supabase
     .from('cards')
     .delete()
@@ -356,7 +351,7 @@ router.delete('/cards/:id', async (req, res) => {
 
 // --- User Profile ---
 
-router.get('/profile', async (req, res) => {
+router.get('/profile', cacheMiddleware('profile', 300000), async (req, res) => {
   const { data, error } = await supabase
     .from('user_profile')
     .select('*')
@@ -367,7 +362,7 @@ router.get('/profile', async (req, res) => {
   res.json(data || { name: '', dob: '', pan: '' });
 });
 
-router.put('/profile', async (req, res) => {
+router.put('/profile', invalidateOnWrite(), async (req, res) => {
   const { name, dob, pan } = req.body;
 
   const { data: existing } = await supabase
@@ -402,7 +397,7 @@ router.put('/profile', async (req, res) => {
 
 // --- Sync Jobs ---
 
-router.get('/sync-jobs', async (req, res) => {
+router.get('/sync-jobs', cacheMiddleware('sync-jobs', 120000), async (req, res) => {
   const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   await supabase
     .from('email_sync_jobs')
@@ -433,24 +428,30 @@ router.get('/sync-jobs', async (req, res) => {
   res.json(jobs);
 });
 
-router.get('/sync-schedule', async (req, res) => {
+router.get('/sync-schedule', cacheMiddleware('sync-schedule', 300000), async (req, res) => {
   const now = new Date();
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(now.getTime() + IST_OFFSET_MS);
 
-  const nextStatement = new Date(now);
-  nextStatement.setHours(6, 0, 0, 0);
-  if (now >= nextStatement) {
-    nextStatement.setDate(nextStatement.getDate() + 1);
+  // Statement sync: daily at 6:00 AM IST (00:30 UTC)
+  const statementIST = new Date(nowIST);
+  statementIST.setHours(6, 0, 0, 0);
+  if (nowIST >= statementIST) {
+    statementIST.setDate(statementIST.getDate() + 1);
   }
+  const nextStatementUTC = new Date(statementIST.getTime() - IST_OFFSET_MS);
 
-  const nextAmazon = new Date(now);
-  const currentHour = now.getHours();
-  const nextSlot = Math.ceil((currentHour + 1) / 6) * 6;
-  if (nextSlot >= 24) {
-    nextAmazon.setDate(nextAmazon.getDate() + 1);
-    nextAmazon.setHours(0, 0, 0, 0);
-  } else {
-    nextAmazon.setHours(nextSlot, 0, 0, 0);
+  // Amazon Pay sync: every 6 hours at IST 6am, 12pm, 6pm, 12am
+  const istHour = nowIST.getHours();
+  const istSlots = [0, 6, 12, 18];
+  let nextISTHour = istSlots.find(h => h > istHour);
+  const nextAmazonIST = new Date(nowIST);
+  if (nextISTHour === undefined) {
+    nextAmazonIST.setDate(nextAmazonIST.getDate() + 1);
+    nextISTHour = 0;
   }
+  nextAmazonIST.setHours(nextISTHour, 0, 0, 0);
+  const nextAmazonUTC = new Date(nextAmazonIST.getTime() - IST_OFFSET_MS);
 
   const { count: amazonCount } = await supabase
     .from('email_accounts')
@@ -472,12 +473,12 @@ router.get('/sync-schedule', async (req, res) => {
     statement_sync: {
       enabled: hasAccounts,
       schedule: 'Daily at 6:00 AM',
-      next_at: hasAccounts ? nextStatement.toISOString() : null,
+      next_at: hasAccounts ? nextStatementUTC.toISOString() : null,
     },
     amazon_pay_sync: {
       enabled: hasAmazonPay,
       schedule: 'Every 6 hours',
-      next_at: hasAmazonPay ? nextAmazon.toISOString() : null,
+      next_at: hasAmazonPay ? nextAmazonUTC.toISOString() : null,
     },
   });
 });
@@ -497,9 +498,8 @@ router.get('/sync-jobs/:id/results', async (req, res) => {
 router.delete('/sync-results/:id', async (req, res) => {
   const { data: result } = await supabase
     .from('email_sync_results')
-    .select('*, email_sync_jobs!inner(email_account_id, email_accounts!inner(user_id))')
+    .select('*')
     .eq('id', req.params.id)
-    .eq('email_sync_jobs.email_accounts.user_id', req.userId)
     .single();
 
   if (!result) return res.status(404).json({ error: 'Not found' });
@@ -519,11 +519,10 @@ router.delete('/sync-results/:id', async (req, res) => {
       if (isRefund) {
         const { data: topup } = await supabase
           .from('voucher_topups')
-          .select('id, voucher_id, vouchers!inner(user_id)')
+          .select('id, voucher_id')
           .eq('date', date)
           .eq('amount', amount)
           .eq('source', 'email')
-          .eq('vouchers.user_id', req.userId)
           .limit(1)
           .single();
 
@@ -542,10 +541,9 @@ router.delete('/sync-results/:id', async (req, res) => {
       } else {
         const { data: usage } = await supabase
           .from('voucher_usage')
-          .select('id, voucher_id, vouchers!inner(user_id)')
+          .select('id, voucher_id')
           .eq('date', date)
           .eq('amount', amount)
-          .eq('vouchers.user_id', req.userId)
           .limit(1)
           .single();
 
@@ -579,7 +577,6 @@ router.patch('/email-accounts/:id/amazon-pay-sync', async (req, res) => {
     .from('email_accounts')
     .select('id')
     .eq('id', accountId)
-    .eq('user_id', req.userId)
     .single();
 
   if (!account) return res.status(404).json({ error: 'Account not found' });
@@ -587,8 +584,7 @@ router.patch('/email-accounts/:id/amazon-pay-sync', async (req, res) => {
   await supabase
     .from('email_accounts')
     .update({ amazon_pay_sync: !!enabled })
-    .eq('id', accountId)
-    .eq('user_id', req.userId);
+    .eq('id', accountId);
 
   if (enabled) {
     triggerAmazonPaySync(accountId, { triggerType: 'auto' });
@@ -604,7 +600,6 @@ router.post('/email-accounts/:id/sync-amazon-pay', async (req, res) => {
     .from('email_accounts')
     .select('id, amazon_pay_sync')
     .eq('id', accountId)
-    .eq('user_id', req.userId)
     .single();
 
   if (!account) return res.status(404).json({ error: 'Account not found' });
@@ -615,7 +610,7 @@ router.post('/email-accounts/:id/sync-amazon-pay', async (req, res) => {
   const sinceDays = periodMap[period] || undefined;
 
   if (period && SYNC_THROTTLE_LIMITS[period]) {
-    const usage = await getSyncUsageToday('amazon_pay', req.userId);
+    const usage = await getSyncUsageToday('amazon_pay');
     if (usage[period] >= SYNC_THROTTLE_LIMITS[period]) {
       return res.status(429).json({ error: `Daily limit reached for "${period}" sync. Try again tomorrow.` });
     }

@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { supabase } from '../models/supabase.js';
+import { cacheMiddleware, invalidateOnWrite } from '../middleware/cache.js';
 
 const router = Router();
 
-router.get('/', async (req, res) => {
+router.get('/', cacheMiddleware(req => `transactions:${req.query.month || ''}:${req.query.year || ''}:${req.query.category || ''}:${req.query.reimbursable || ''}`, 120000), async (req, res) => {
   const { month, year, category, reimbursable } = req.query;
 
   let query = supabase
@@ -95,7 +96,7 @@ router.get('/:id', async (req, res) => {
   });
 });
 
-router.post('/', async (req, res) => {
+router.post("/", invalidateOnWrite(), async (req, res) => {
   const { date, description, amount, type, category_id, source, is_reimbursable, notes } = req.body;
 
   const { data, error } = await supabase
@@ -118,7 +119,7 @@ router.post('/', async (req, res) => {
   res.status(201).json({ id: data.id });
 });
 
-router.put('/:id', async (req, res) => {
+router.put("/:id", invalidateOnWrite(), async (req, res) => {
   const { date, description, amount, type, category_id, source, is_reimbursable, is_voucher_purchase, notes } = req.body;
 
   const { error } = await supabase
@@ -141,7 +142,7 @@ router.put('/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-router.patch('/rename-source', async (req, res) => {
+router.patch("/rename-source", invalidateOnWrite(), async (req, res) => {
   const { old_source, new_source } = req.body;
   if (!old_source || !new_source) return res.status(400).json({ error: 'old_source and new_source required' });
 
@@ -166,7 +167,7 @@ router.patch('/rename-source', async (req, res) => {
   });
 });
 
-router.delete('/by-source', async (req, res) => {
+router.delete("/by-source", invalidateOnWrite(), async (req, res) => {
   const { source } = req.query;
   if (!source) return res.status(400).json({ error: 'source query param required' });
 
@@ -180,12 +181,12 @@ router.delete('/by-source', async (req, res) => {
   res.json({ success: true, deleted: data?.length || 0 });
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete("/:id", invalidateOnWrite(), async (req, res) => {
   await supabase.from('transactions').delete().eq('id', req.params.id).eq('user_id', req.userId);
   res.json({ success: true });
 });
 
-router.patch('/:id/category', async (req, res) => {
+router.patch("/:id/category", invalidateOnWrite(), async (req, res) => {
   const { category_id } = req.body;
   await supabase
     .from('transactions')
@@ -195,7 +196,7 @@ router.patch('/:id/category', async (req, res) => {
   res.json({ success: true });
 });
 
-router.patch('/:id/reimbursable', async (req, res) => {
+router.patch("/:id/reimbursable", invalidateOnWrite(), async (req, res) => {
   const { is_reimbursable } = req.body;
   await supabase.from('transactions').update({ is_reimbursable: !!is_reimbursable }).eq('id', req.params.id).eq('user_id', req.userId);
   res.json({ success: true });
