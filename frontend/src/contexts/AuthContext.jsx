@@ -25,10 +25,7 @@ export function AuthProvider({ children }) {
       (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-        if (session) {
-          checkProfile(session.access_token);
-        } else {
-          setNeedsSetup(false);
+        if (!session) {
           setLoading(false);
         }
       }
@@ -95,7 +92,6 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
-    setNeedsSetup(false);
   }
 
   function completeSetup() {
