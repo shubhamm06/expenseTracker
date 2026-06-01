@@ -9,11 +9,13 @@ const activeJobs = new Map();
 
 export function startScheduler() {
   scheduledTask = cron.schedule('0 6 * * *', () => {
+    console.log('[Scheduler] Email sync cron TRIGGERED at', new Date().toISOString());
     syncAllAccounts();
   });
   console.log('[Scheduler] Email sync cron started (daily at 6 AM)');
 
   amazonPayTask = cron.schedule('0 */6 * * *', () => {
+    console.log('[Scheduler] Amazon Pay sync cron TRIGGERED at', new Date().toISOString());
     syncAllAmazonPay();
   });
   console.log('[Scheduler] Amazon Pay sync cron started (every 6 hours)');
