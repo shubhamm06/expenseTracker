@@ -14,12 +14,14 @@ export default function Vouchers() {
   const [newTopup, setNewTopup] = useState({ amount: '', date: new Date().toLocaleDateString('en-CA'), description: '', is_gift_card: true });
   const [showTopup, setShowTopup] = useState(false);
   const [showAddUsage, setShowAddUsage] = useState(false);
+  const [editingEntry, setEditingEntry] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
   const [emailModal, setEmailModal] = useState(null);
   const [syncSchedule, setSyncSchedule] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [showShareToast, setShowShareToast] = useState(false);
   const [voucherTypeFilter, setVoucherTypeFilter] = useState('all');
+  const [balanceSummary, setBalanceSummary] = useState(null);
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
@@ -128,12 +130,14 @@ export default function Vouchers() {
 
   async function loadActivity(voucherId) {
     const params = new URLSearchParams({ month: String(filters.month), year: String(filters.year) });
-    const [usageRes, topupsRes] = await Promise.all([
+    const [usageRes, topupsRes, balanceRes] = await Promise.all([
       fetch(`/api/vouchers/${voucherId}/usage?${params}`),
       fetch(`/api/vouchers/${voucherId}/topups?${params}`),
+      fetch(`/api/vouchers/${voucherId}/balance-summary?${params}`),
     ]);
     setUsage(await usageRes.json());
     setTopups(await topupsRes.json());
+    setBalanceSummary(await balanceRes.json());
   }
 
   useEffect(() => {
@@ -171,6 +175,25 @@ export default function Vouchers() {
     loadVouchers();
   }
 
+  async function saveEntry(entry) {
+    const endpoint = entry._type === 'usage'
+      ? `/api/vouchers/usage/${entry.id}`
+      : `/api/vouchers/topup/${entry.id}`;
+    await fetch(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount: Number(entry.amount),
+        date: entry.date,
+        description: entry.description,
+        ...(entry._type === 'usage' ? { category_id: entry.category_id || null } : {}),
+      }),
+    });
+    setEditingEntry(null);
+    loadActivity(selectedVoucher.id);
+    loadVouchers();
+  }
+
   function confirmDeleteEntry(type, id, description, amount) {
     setConfirmModal({
       title: 'Delete Entry',
@@ -204,9 +227,6 @@ export default function Vouchers() {
     loadVouchers();
   }
 
-  const usedPct = selectedVoucher
-    ? ((selectedVoucher.initial_amount - selectedVoucher.remaining_amount) / selectedVoucher.initial_amount) * 100
-    : 0;
 
   return (
     <div className="space-y-6 animate-fade-in-up">
@@ -313,7 +333,7 @@ export default function Vouchers() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {vouchers.map((v, idx) => {
-            const pct = v.initial_amount > 0 ? (v.remaining_amount / v.initial_amount) * 100 : 0;
+            const isLowBalance = v.remaining_amount < 1000;
             const isSelected = selectedVoucher?.id === v.id;
             return (
               <div
@@ -333,7 +353,7 @@ export default function Vouchers() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1">
-                    {pct <= 20 && (
+                    {isLowBalance && (
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}>LOW</span>
                     )}
                     <button
@@ -352,18 +372,24 @@ export default function Vouchers() {
                     {formatCurrency(v.remaining_amount)}
                   </span>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    / {formatCurrency(v.initial_amount)}
+                    balance
                   </span>
                 </div>
-                <div className="mt-2.5 w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--progress-bg)' }}>
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${pct}%`,
-                      background: pct > 50 ? 'var(--accent)' : pct > 20 ? 'var(--amber)' : 'var(--danger)',
-                    }}
-                  />
-                </div>
+                {isSelected && (() => {
+                  const manualTopups = topups.filter(t => t.source === 'manual').reduce((s, t) => s + t.amount, 0);
+                  if (!manualTopups) return null;
+                  const monthName = new Date(filters.year, filters.month - 1).toLocaleString('default', { month: 'long' });
+                  return (
+                    <div className="mt-1.5 flex items-baseline gap-1.5">
+                      <span className="text-xs font-semibold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)' }}>
+                        +{formatCurrency(manualTopups)}
+                      </span>
+                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        added in {monthName}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -545,6 +571,37 @@ export default function Vouchers() {
             </form>
           )}
 
+          {/* Monthly Summary */}
+          {(() => {
+            const monthSpend = usage.reduce((s, u) => s + u.amount, 0);
+            const monthTopup = topups.reduce((s, t) => s + t.amount, 0);
+            const carryForward = balanceSummary?.carry_forward ?? 0;
+            const endBalance = carryForward + monthTopup - monthSpend;
+            return (
+              <div className="px-5 py-3 flex items-center gap-3 flex-wrap" style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-muted)' }}>Carry Forward:</span>
+                  <span className="text-sm font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>{formatCurrency(carryForward)}</span>
+                </div>
+                <span style={{ color: 'var(--border)' }}>|</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-muted)' }}>Spent:</span>
+                  <span className="text-sm font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--danger)' }}>-{formatCurrency(monthSpend)}</span>
+                </div>
+                <span style={{ color: 'var(--border)' }}>|</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-muted)' }}>Added:</span>
+                  <span className="text-sm font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--success)' }}>+{formatCurrency(monthTopup)}</span>
+                </div>
+                <span style={{ color: 'var(--border)' }}>|</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-muted)' }}>Balance:</span>
+                  <span className="text-sm font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{formatCurrency(endBalance)}</span>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Activity Table */}
           {usage.length === 0 && topups.length === 0 ? (
             <div className="px-5 py-8 text-center">
@@ -555,7 +612,7 @@ export default function Vouchers() {
           ) : (<>
             {/* Table Header */}
             <div className="overflow-x-auto">
-            <div className="grid grid-cols-[80px_1fr_130px_120px_56px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[520px]"
+            <div className="grid grid-cols-[80px_1fr_130px_120px_78px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[520px]"
               style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
               <span>Date</span>
               <span className="text-left">Description</span>
@@ -577,8 +634,9 @@ export default function Vouchers() {
                 return (
                   <div
                     key={`${entry._type}-${entry.id}`}
-                    className="grid grid-cols-[80px_1fr_130px_120px_56px] gap-3 px-4 py-3 items-center transition-colors duration-150 animate-slide-in"
+                    className="grid grid-cols-[80px_1fr_130px_120px_78px] gap-3 px-4 py-3 items-center transition-colors duration-150 animate-slide-in cursor-pointer"
                     style={{ animationDelay: `${Math.min(idx * 20, 400)}ms`, background: rowBg }}
+                    onDoubleClick={() => setEditingEntry({ ...entry })}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--table-row-hover)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = rowBg; }}
                   >
@@ -639,6 +697,15 @@ export default function Vouchers() {
                           </svg>
                         </button>
                       ) : <span className="w-[22px]" />}
+                      <button
+                        onClick={() => setEditingEntry({ ...entry })}
+                        className="p-1 rounded hover:bg-[var(--surface)] transition-colors opacity-40 hover:opacity-100"
+                        title="Edit this entry"
+                      >
+                        <svg className="w-3.5 h-3.5" style={{ color: 'var(--text-secondary)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+                        </svg>
+                      </button>
                       <button
                         onClick={() => confirmDeleteEntry(entry._type, entry.id, entry.description, entry.amount)}
                         className="p-1 rounded hover:bg-[var(--surface)] transition-colors opacity-40 hover:opacity-100"
@@ -729,6 +796,16 @@ export default function Vouchers() {
         />
       )}
 
+      {/* Edit Entry Modal */}
+      {editingEntry && (
+        <EditEntryModal
+          entry={editingEntry}
+          categories={categories}
+          onSave={saveEntry}
+          onClose={() => setEditingEntry(null)}
+        />
+      )}
+
       {/* Confirm Modal */}
       {confirmModal && (
         <ConfirmModal
@@ -744,6 +821,121 @@ export default function Vouchers() {
         <EmailDetailModal email={emailModal} onClose={() => setEmailModal(null)} />
       )}
     </div>
+  );
+}
+
+function EditEntryModal({ entry, categories, onSave, onClose }) {
+  const [form, setForm] = useState({
+    id: entry.id,
+    _type: entry._type,
+    amount: entry.amount,
+    date: entry.date,
+    description: entry.description || '',
+    category_id: entry.category_id || '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+  }
+
+  useEffect(() => {
+    function handleKey(e) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  const isUsage = entry._type === 'usage';
+  const inputStyle = { background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text-primary)' };
+
+  return (
+    <Modal open={true} onClose={onClose}>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+          Edit {isUsage ? 'Spend' : 'Top-up'}
+        </h2>
+        <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Amount</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={form.amount}
+              onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+              style={inputStyle}
+              required
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Date</label>
+            <input
+              type="date"
+              value={form.date}
+              onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+              style={inputStyle}
+              required
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Description</label>
+          <input
+            type="text"
+            value={form.description}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+            className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+            style={inputStyle}
+          />
+        </div>
+
+        {isUsage && (
+          <div>
+            <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Category</label>
+            <select
+              value={form.category_id}
+              onChange={e => setForm(f => ({ ...f, category_id: e.target.value ? Number(e.target.value) : '' }))}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+              style={inputStyle}
+            >
+              <option value="">Uncategorized</option>
+              {categories.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-lg" style={{ color: 'var(--text-secondary)' }}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
