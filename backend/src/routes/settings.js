@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { google } from 'googleapis';
 import { supabase } from '../models/supabase.js';
 import { triggerSync, triggerAmazonPaySync, isSyncRunning, isAmazonPaySyncRunning } from '../services/syncScheduler.js';
-import { cacheMiddleware, invalidateOnWrite } from '../middleware/cache.js';
+import { cacheMiddleware, invalidateOnWrite, invalidateKey } from '../middleware/cache.js';
 
 const router = Router();
 
@@ -274,6 +274,7 @@ router.post('/email-accounts/:id/sync', async (req, res) => {
   }
 
   const result = triggerSync(accountId, { sinceDays, syncPeriod: period });
+  invalidateKey(req.userId, 'sync-jobs');
   if (result.alreadyRunning) {
     return res.json({ message: 'Sync already in progress' });
   }
@@ -397,7 +398,7 @@ router.put('/profile', invalidateOnWrite(), async (req, res) => {
 
 // --- Sync Jobs ---
 
-router.get('/sync-jobs', cacheMiddleware('sync-jobs', 120000), async (req, res) => {
+router.get('/sync-jobs', cacheMiddleware('sync-jobs', 30000), async (req, res) => {
   const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   await supabase
     .from('email_sync_jobs')
@@ -617,6 +618,7 @@ router.post('/email-accounts/:id/sync-amazon-pay', async (req, res) => {
   }
 
   const result = triggerAmazonPaySync(accountId, { sinceDays, syncPeriod: period });
+  invalidateKey(req.userId, 'sync-jobs');
   if (result.alreadyRunning) {
     return res.json({ message: 'Amazon Pay sync already in progress' });
   }
