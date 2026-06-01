@@ -111,6 +111,7 @@ export default function Onboarding() {
       setStep(step + 1);
       setError('');
     } else {
+      await apiFetch('/api/auth/complete-onboarding', { method: 'POST' });
       completeSetup();
     }
   }

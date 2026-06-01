@@ -28,7 +28,7 @@ router.get('/me', async (req, res) => {
   res.json({
     user: { id: req.user.id, email: req.user.email },
     profile,
-    needs_setup: !profile,
+    needs_setup: !profile || !profile.onboarding_completed,
   });
 });
 
@@ -95,6 +95,15 @@ router.post('/setup', async (req, res) => {
     user_id: userId,
     is_protected: true,
   });
+
+  res.json({ success: true });
+});
+
+router.post('/complete-onboarding', async (req, res) => {
+  await supabase
+    .from('user_profile')
+    .update({ onboarding_completed: true })
+    .eq('user_id', req.userId);
 
   res.json({ success: true });
 });
