@@ -47,7 +47,10 @@ export default function Dashboard() {
   }
 
   const monthLabel = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-  const netSpend = (summary.total_spend || 0) - (summary.total_credit || 0);
+  const totalDebit = summary.total_spend || 0;
+  const totalCredit = (summary.total_credit || 0) + (summary.voucher_refunds || 0);
+  const othersShare = (summary.card_others_share || 0) + (summary.voucher_others_share || 0);
+  const netSpend = totalDebit - totalCredit - othersShare;
 
   const container = {
     hidden: { opacity: 0 },
@@ -105,12 +108,13 @@ export default function Dashboard() {
       )}
 
       {/* KPI Banner */}
-      <motion.div variants={item} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <KPICard label="Total Debit" value={summary.total_spend} color="var(--danger)" />
-        <KPICard label="Amazon Pay" value={summary.voucher_spend} color="var(--purple)" />
-        <KPICard label="Total Credit" value={summary.total_credit} color="var(--success)" />
+      <motion.div variants={item} className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <KPICard label="Total Debit" value={totalDebit} subtitle={`Cards: ${formatCurrency(summary.direct_spend || 0)} + Amazon Pay: ${formatCurrency(summary.voucher_spend || 0)}`} color="var(--danger)" />
+        <KPICard label="Total Credit" value={totalCredit} subtitle={`Cards: ${formatCurrency(summary.total_credit || 0)} + AP Refunds: ${formatCurrency(summary.voucher_refunds || 0)}`} color="var(--success)" />
         <KPICard label="Net Spend" value={netSpend} color={netSpend > 0 ? 'var(--danger)' : 'var(--success)'} />
-        <KPICard label="Not Mine" value={summary.reimbursable_total} color="var(--amber)" />
+        {othersShare > 0 && (
+          <KPICard label="Others Share" value={othersShare} subtitle={`Cards: ${formatCurrency(summary.card_others_share || 0)} + AP: ${formatCurrency(summary.voucher_others_share || 0)}`} color="var(--amber)" />
+        )}
       </motion.div>
 
       <motion.p variants={item} className="text-xs italic -mt-2" style={{ color: 'var(--text-muted)' }}>
@@ -150,7 +154,7 @@ export default function Dashboard() {
         </div>
 
         {/* Net Spend Ring */}
-        <NetSpendCard netSpend={netSpend} totalSpend={summary.total_spend || 1} />
+        <NetSpendCard netSpend={netSpend} totalSpend={totalDebit || 1} />
       </motion.div>
 
       {/* Row: Category Donut + Top Merchants */}
@@ -250,13 +254,14 @@ function getGreeting() {
   return 'Good evening';
 }
 
-function KPICard({ label, value, color }) {
+function KPICard({ label, value, color, subtitle }) {
   return (
     <motion.div className="card p-3" whileHover={{ scale: 1.02 }} transition={{ type: 'spring', stiffness: 400, damping: 25 }}>
       <p className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
       <p className="text-lg font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color }}>
         <AnimatedNumber value={value} />
       </p>
+      {subtitle && <p className="text-[9px] mt-1 leading-tight" style={{ color: 'var(--text-muted)' }}>{subtitle}</p>}
     </motion.div>
   );
 }

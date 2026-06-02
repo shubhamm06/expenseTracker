@@ -21,6 +21,7 @@ export default function Vouchers() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [showShareToast, setShowShareToast] = useState(false);
   const [voucherTypeFilter, setVoucherTypeFilter] = useState('all');
+  const [splitPopover, setSplitPopover] = useState(null);
   const [balanceSummary, setBalanceSummary] = useState(null);
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
@@ -476,6 +477,39 @@ export default function Vouchers() {
                 </svg>
                 Add Balance
               </button>
+              <button
+                onClick={() => setConfirmModal({
+                  title: 'Add Others\' Share',
+                  message: '',
+                  isInput: true,
+                  inputPlaceholder: 'Amount others owe',
+                  confirmLabel: 'Add Split',
+                  onConfirm: async (val) => {
+                    if (!val || isNaN(parseFloat(val))) return;
+                    await fetch(`/api/vouchers/${selectedVoucher.id}/topup`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        amount: parseFloat(val),
+                        date: `${filters.year}-${String(filters.month).padStart(2, '0')}-01`,
+                        description: 'Bulk Split - Others share',
+                        source: 'split',
+                      }),
+                    });
+                    setConfirmModal(null);
+                    loadActivity(selectedVoucher.id);
+                    loadVouchers();
+                  },
+                })}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                style={{ background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                title="Add others' share as credit"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m7.848 8.25 1.536.887M7.848 8.25a3 3 0 1 1-5.196-3 3 3 0 0 1 5.196 3Zm1.536.887a2.165 2.165 0 0 1 1.083 1.839c.005.351.054.695.14 1.024M9.384 9.137l2.077 1.199M7.848 15.75l1.536-.887m-1.536.887a3 3 0 1 1-5.196 3 3 3 0 0 1 5.196-3Zm1.536-.887a2.165 2.165 0 0 0 1.083-1.838c.005-.352.054-.695.14-1.025m-1.223 2.863 2.077-1.199m0-3.328a4.323 4.323 0 0 1 2.068-1.379l5.325-1.628a4.5 4.5 0 0 1 2.48-.044l.803.215m-7.676 2.836a4.323 4.323 0 0 1 2.068 1.379l5.325 1.628a4.5 4.5 0 0 1 2.48.044l.803.215" />
+                </svg>
+                Split
+              </button>
               {(usage.length > 0 || topups.length > 0) && (
                 <button
                   onClick={() => setConfirmModal({
@@ -612,12 +646,12 @@ export default function Vouchers() {
           ) : (<>
             {/* Table Header */}
             <div className="overflow-x-auto">
-            <div className="grid grid-cols-[80px_1fr_130px_120px_78px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[520px]"
+            <div className="grid grid-cols-[80px_minmax(150px,1fr)_120px_130px_78px] gap-3 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-center min-w-[520px]"
               style={{ borderBottom: '2px solid var(--header-divider)', color: 'var(--text-secondary)', letterSpacing: '0.08em' }}>
               <span>Date</span>
               <span className="text-left">Description</span>
-              <span>Category</span>
               <span>Amount</span>
+              <span>Category</span>
               <span></span>
             </div>
 
@@ -634,7 +668,7 @@ export default function Vouchers() {
                 return (
                   <div
                     key={`${entry._type}-${entry.id}`}
-                    className="grid grid-cols-[80px_1fr_130px_120px_78px] gap-3 px-4 py-3 items-center transition-colors duration-150 animate-slide-in cursor-pointer"
+                    className="grid grid-cols-[80px_minmax(150px,1fr)_120px_130px_78px] gap-3 px-4 py-3 items-center transition-colors duration-150 animate-slide-in cursor-pointer group"
                     style={{ animationDelay: `${Math.min(idx * 20, 400)}ms`, background: rowBg }}
                     onDoubleClick={() => setEditingEntry({ ...entry })}
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--table-row-hover)'; }}
@@ -654,6 +688,61 @@ export default function Vouchers() {
                       }}>
                         {entry._type === 'usage' ? 'SPEND' : isManualTopup ? 'TOP UP' : 'REFUND'}
                       </span>
+                    </div>
+
+                    <div className="flex flex-col items-end">
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm font-semibold tabular-nums" style={{
+                          fontFamily: 'var(--font-mono)',
+                          color: entry._type === 'topup' ? 'var(--success)' : 'var(--danger)',
+                        }}>
+                          {entry._type === 'topup' ? '+' : '-'}{formatCurrency(entry.amount)}
+                        </span>
+                        <span className="w-4 inline-flex justify-center">
+                          {entry._type === 'usage' && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setSplitPopover(splitPopover === entry.id ? null : entry.id); }}
+                              className="p-0.5 rounded opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+                              style={{ color: 'var(--accent)' }}
+                              title="Split this expense"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m7.848 8.25 1.536.887M7.848 8.25a3 3 0 1 1-5.196-3 3 3 0 0 1 5.196 3Zm1.536.887a2.165 2.165 0 0 1 1.083 1.839c.005.351.054.695.14 1.024M9.384 9.137l2.077 1.199M7.848 15.75l1.536-.887m-1.536.887a3 3 0 1 1-5.196 3 3 3 0 0 1 5.196-3Zm1.536-.887a2.165 2.165 0 0 0 1.083-1.838c.005-.352.054-.695.14-1.025m-1.223 2.863 2.077-1.199m0-3.328a4.323 4.323 0 0 1 2.068-1.379l5.325-1.628a4.5 4.5 0 0 1 2.48-.044l.803.215m-7.676 2.836a4.323 4.323 0 0 1 2.068 1.379l5.325 1.628a4.5 4.5 0 0 1 2.48.044l.803.215" />
+                              </svg>
+                            </button>
+                          )}
+                        </span>
+                      </div>
+                      {splitPopover === entry.id && (
+                        <div className="mt-1.5" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1 justify-end">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="My share"
+                              className="w-24 rounded-md px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-teal-500/30"
+                              style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}
+                              autoFocus
+                              onKeyDown={e => {
+                                if (e.key === 'Escape') setSplitPopover(null);
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const myShare = parseFloat(e.target.value);
+                                  const othersShare = entry.amount - myShare;
+                                  if (myShare >= 0 && othersShare > 0) {
+                                    fetch(`/api/vouchers/${selectedVoucher.id}/topup`, {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ amount: othersShare, date: entry.date, description: `Split - ${entry.description || 'Others share'}`, source: 'split' }),
+                                    }).then(() => { setSplitPopover(null); loadActivity(selectedVoucher.id); loadVouchers(); });
+                                  }
+                                }
+                              }}
+                              onBlur={() => setSplitPopover(null)}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex justify-center">
@@ -677,13 +766,6 @@ export default function Vouchers() {
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>—</span>
                       )}
                     </div>
-
-                    <span className="text-sm font-semibold tabular-nums text-right" style={{
-                      fontFamily: 'var(--font-mono)',
-                      color: entry._type === 'topup' ? 'var(--success)' : 'var(--danger)',
-                    }}>
-                      {entry._type === 'topup' ? '+' : '-'}{formatCurrency(entry.amount)}
-                    </span>
 
                     <div className="flex items-center justify-end gap-0.5">
                       {entry.email_metadata ? (
@@ -1048,12 +1130,13 @@ function QuickAddModal({ data, voucher, categories, onClose, onSubmit }) {
   );
 }
 
-function ConfirmModal({ title, message, confirmLabel, onConfirm, onClose }) {
+function ConfirmModal({ title, message, confirmLabel, onConfirm, onClose, isInput, inputPlaceholder }) {
   const [loading, setLoading] = useState(false);
+  const [inputVal, setInputVal] = useState('');
 
   async function handleConfirm() {
     setLoading(true);
-    await onConfirm();
+    await onConfirm(isInput ? inputVal : undefined);
     setLoading(false);
   }
 
@@ -1068,7 +1151,19 @@ function ConfirmModal({ title, message, confirmLabel, onConfirm, onClose }) {
         </div>
         <h3 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
       </div>
-      <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{message}</p>
+      {message && <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{message}</p>}
+      {isInput && (
+        <input
+          type="number"
+          step="0.01"
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          placeholder={inputPlaceholder || 'Enter amount'}
+          className="w-full px-3 py-2 rounded-lg text-sm mt-3"
+          style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+          autoFocus
+        />
+      )}
       <div className="flex items-center justify-end gap-2 mt-4">
         <button
           onClick={onClose}

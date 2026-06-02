@@ -77,7 +77,7 @@ router.get('/:id/usage', async (req, res) => {
 });
 
 router.post('/:id/usage', invalidateOnWrite(), async (req, res) => {
-  const { amount, date, description, category_id } = req.body;
+  const { amount, date, description, category_id, my_share } = req.body;
   const voucherId = req.params.id;
 
   const { data: voucher } = await supabase
@@ -100,6 +100,7 @@ router.post('/:id/usage', invalidateOnWrite(), async (req, res) => {
       date,
       description: description || null,
       category_id: category_id || null,
+      my_share: my_share !== undefined && my_share !== null ? Number(my_share) : null,
       user_id: req.userId,
     })
     .select('id')
@@ -381,6 +382,16 @@ router.patch('/usage/:id/category', invalidateOnWrite(), async (req, res) => {
     .eq('id', req.params.id)
     .eq('user_id', req.userId);
 
+  res.json({ success: true });
+});
+
+router.patch('/usage/:id/split', invalidateOnWrite(), async (req, res) => {
+  const { my_share } = req.body;
+  await supabase
+    .from('voucher_usage')
+    .update({ my_share: my_share !== null && my_share !== undefined ? Number(my_share) : null })
+    .eq('id', req.params.id)
+    .eq('user_id', req.userId);
   res.json({ success: true });
 });
 

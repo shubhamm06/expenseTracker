@@ -6,7 +6,7 @@ import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { supabase } from '../models/supabase.js';
-import { parsePdf, extractTransactionsFromText, extractSourceFromText, extractDueDateFromText } from './pdfParser.js';
+import { parsePdf, extractTransactionsFromText, extractSourceFromText } from './pdfParser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMP_DIR = join(__dirname, '../../tmp/email-attachments');
@@ -458,8 +458,6 @@ async function processAttachment(attachment, passwords, jobId, userId, alreadySy
       }
     }
 
-    const dueDate = extractDueDateFromText(text);
-
     // Per-user dedup: skip if this source + first transaction date combo already exists
     const firstTxnDate = valid.length > 0 ? (valid[0].date || '') : '';
     const displayName = `${attachment.filename}${detectedSource ? ' · ' + detectedSource : ''}${firstTxnDate ? ' · ' + firstTxnDate : ''}`;
@@ -490,7 +488,7 @@ async function processAttachment(attachment, passwords, jobId, userId, alreadySy
       source_type: 'email',
       detected_source: detectedSource || null,
       pending_transactions: JSON.stringify(valid),
-      due_date: dueDate || null,
+      due_date: null,
       user_id: userId,
     });
 

@@ -9,14 +9,48 @@ router.get('/summary', cacheMiddleware(req => `dashboard:summary:${req.query.mon
   const m = (month || String(new Date().getMonth() + 1)).padStart(2, '0');
   const y = year || String(new Date().getFullYear());
 
-  const { data, error } = await supabase.rpc('get_dashboard_summary', {
-    p_month: m,
-    p_year: y,
-    p_user_id: req.userId,
-  });
+  const mInt = parseInt(m);
+  const yInt = parseInt(y);
+  const startDate = `${y}-${m}-01`;
+  const nextMonth = mInt === 12 ? 1 : mInt + 1;
+  const nextYear = mInt === 12 ? yInt + 1 : yInt;
+  const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+
+  const [{ data, error }, { data: topups }, { data: voucherUsage }, { data: cardSplits }] = await Promise.all([
+    supabase.rpc('get_dashboard_summary', {
+      p_month: m,
+      p_year: y,
+      p_user_id: req.userId,
+    }),
+    supabase
+      .from('voucher_topups')
+      .select('amount, source')
+      .eq('user_id', req.userId)
+      .gte('date', startDate)
+      .lt('date', endDate),
+    supabase
+      .from('voucher_usage')
+      .select('amount, my_share')
+      .eq('user_id', req.userId)
+      .gte('date', startDate)
+      .lt('date', endDate),
+    supabase
+      .from('transactions')
+      .select('amount, my_share')
+      .eq('user_id', req.userId)
+      .eq('type', 'debit')
+      .not('my_share', 'is', null)
+      .gte('date', startDate)
+      .lt('date', endDate),
+  ]);
 
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  const voucherRefunds = (topups || []).filter(t => t.source !== 'manual').reduce((s, t) => s + t.amount, 0);
+  const voucherOthersShare = (voucherUsage || []).filter(u => u.my_share != null).reduce((s, u) => s + (u.amount - u.my_share), 0);
+  const cardOthersShare = (cardSplits || []).reduce((s, t) => s + (t.amount - t.my_share), 0);
+
+  res.json({ ...data, voucher_refunds: voucherRefunds, voucher_others_share: voucherOthersShare, card_others_share: cardOthersShare });
 });
 
 router.get('/monthly-comparison', cacheMiddleware('dashboard:monthly'), async (req, res) => {

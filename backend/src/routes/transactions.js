@@ -41,43 +41,6 @@ router.get('/', cacheMiddleware(req => `transactions:${req.query.month || ''}:${
   res.json(transactions);
 });
 
-router.get('/due-dates', async (req, res) => {
-  const { month, year } = req.query;
-  if (!month || !year) return res.json({});
-
-  const startDate = `${year}-${month.padStart(2, '0')}-01`;
-  const endDate = `${year}-${month.padStart(2, '0')}-31`;
-
-  // Find sources that have transactions in this month
-  const { data: sources } = await supabase
-    .from('transactions')
-    .select('source')
-    .eq('user_id', req.userId)
-    .gte('date', startDate)
-    .lte('date', endDate)
-    .not('source', 'is', null);
-
-  const uniqueSources = [...new Set((sources || []).map(s => s.source))];
-  if (uniqueSources.length === 0) return res.json({});
-
-  // Get due dates for those sources from uploaded_files
-  const { data: rows } = await supabase
-    .from('uploaded_files')
-    .select('detected_source, due_date')
-    .eq('user_id', req.userId)
-    .not('due_date', 'is', null)
-    .in('detected_source', uniqueSources)
-    .order('uploaded_at', { ascending: false });
-
-  const dueDates = {};
-  for (const row of rows || []) {
-    if (!dueDates[row.detected_source]) {
-      dueDates[row.detected_source] = row.due_date;
-    }
-  }
-  res.json(dueDates);
-});
-
 router.get('/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('transactions')
@@ -97,7 +60,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post("/", invalidateOnWrite(), async (req, res) => {
-  const { date, description, amount, type, category_id, source, is_reimbursable, notes } = req.body;
+  const { date, description, amount, type, category_id, source, is_reimbursable, notes, my_share } = req.body;
 
   const { data, error } = await supabase
     .from('transactions')
@@ -110,6 +73,7 @@ router.post("/", invalidateOnWrite(), async (req, res) => {
       source: source || null,
       is_reimbursable: !!is_reimbursable,
       notes: notes || null,
+      my_share: my_share !== undefined && my_share !== null ? Number(my_share) : null,
       user_id: req.userId,
     })
     .select('id')
@@ -199,6 +163,16 @@ router.patch("/:id/category", invalidateOnWrite(), async (req, res) => {
 router.patch("/:id/reimbursable", invalidateOnWrite(), async (req, res) => {
   const { is_reimbursable } = req.body;
   await supabase.from('transactions').update({ is_reimbursable: !!is_reimbursable }).eq('id', req.params.id).eq('user_id', req.userId);
+  res.json({ success: true });
+});
+
+router.patch("/:id/split", invalidateOnWrite(), async (req, res) => {
+  const { my_share } = req.body;
+  await supabase
+    .from('transactions')
+    .update({ my_share: my_share !== null && my_share !== undefined ? Number(my_share) : null })
+    .eq('id', req.params.id)
+    .eq('user_id', req.userId);
   res.json({ success: true });
 });
 

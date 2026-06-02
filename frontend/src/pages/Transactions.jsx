@@ -7,13 +7,14 @@ export default function Transactions() {
     const [editingTransaction, setEditingTransaction] = useState(null);
   const [selectedSources, setSelectedSources] = useState(new Set());
   const [collapsedSources, setCollapsedSources] = useState(new Set());
+  const [splitPopover, setSplitPopover] = useState(null);
+  const [bulkSplit, setBulkSplit] = useState(null);
   const [confirmModal, setConfirmModal] = useState(null);
   const [renamingSource, setRenamingSource] = useState(null);
   const [renameValue, setRenameValue] = useState('');
   const [addingSource, setAddingSource] = useState(null);
   const [syncSchedule, setSyncSchedule] = useState(null);
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [dueDates, setDueDates] = useState({});
+  const [statFilter, setStatFilter] = useState('all');
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
@@ -34,12 +35,8 @@ export default function Transactions() {
       month: String(filters.month),
       year: String(filters.year),
     });
-    Promise.all([
-      fetch(`/api/transactions?${params}`).then(r => r.json()),
-      fetch(`/api/transactions/due-dates?${params}`).then(r => r.json()),
-    ]).then(([txns, dues]) => {
+    fetch(`/api/transactions?${params}`).then(r => r.json()).then(txns => {
       setTransactions(txns);
-      setDueDates(dues);
     });
   }
 
@@ -62,6 +59,35 @@ export default function Transactions() {
           return { ...t, category_id: categoryId, category_name: cat?.name, category_color: cat?.color || null };
         })
       );
+    });
+  }
+
+  async function addBulkSplit(source, amount) {
+    await fetch('/api/transactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: `${filters.year}-${String(filters.month).padStart(2, '0')}-01`,
+        description: 'Bulk Split - Others share',
+        amount: Number(amount),
+        type: 'credit',
+        source,
+      }),
+    });
+    setBulkSplit(null);
+    loadTransactions();
+  }
+
+  function updateSplit(id, myShare) {
+    fetch(`/api/transactions/${id}/split`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ my_share: myShare }),
+    }).then(() => {
+      setTransactions(prev =>
+        prev.map(t => t.id === id ? { ...t, my_share: myShare } : t)
+      );
+      setSplitPopover(null);
     });
   }
 
@@ -94,33 +120,46 @@ export default function Transactions() {
   }
 
   const isExcluded = t => t.is_reimbursable || t.category_name === 'Payments' || t.category_name === 'Gift Card';
+  const isBulkSplit = t => t.description === 'Bulk Split - Others share';
   const totalDebit = transactions.filter(t => t.type !== 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
-  const totalCredit = transactions.filter(t => t.type === 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
-  const netAmount = totalDebit - totalCredit;
+  const totalCredit = transactions.filter(t => t.type === 'credit' && !isExcluded(t) && !isBulkSplit(t)).reduce((s, t) => s + t.amount, 0);
+  const othersShare = transactions.filter(t => t.type === 'credit' && !isExcluded(t) && isBulkSplit(t)).reduce((s, t) => s + t.amount, 0);
+  const netAmount = totalDebit - totalCredit - othersShare;
   const reimbursableCount = transactions.filter(t => t.is_reimbursable).length;
+  const reimbursableTotal = transactions.filter(t => t.is_reimbursable).reduce((s, t) => s + t.amount, 0);
 
   const monthLabel = new Date(filters.year, filters.month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
 
+  // Apply stat filter
+  const filteredTransactions = statFilter === 'all' ? transactions : transactions.filter(t => {
+    if (statFilter === 'debit') return t.type !== 'credit' && !isExcluded(t);
+    if (statFilter === 'credit') return t.type === 'credit' && !isExcluded(t) && !isBulkSplit(t);
+    if (statFilter === 'others') return t.type === 'credit' && !isExcluded(t) && isBulkSplit(t);
+    if (statFilter === 'net') return !isExcluded(t);
+    if (statFilter === 'notmine') return t.is_reimbursable;
+    return true;
+  });
+
   // Group transactions by source
-  const sourceGroups = {};
-  for (const t of transactions) {
-    const key = t.source || 'Unknown';
+  const sourceGroups = { 'Miscellaneous': [] };
+  for (const t of filteredTransactions) {
+    const key = t.source || 'Miscellaneous';
     if (!sourceGroups[key]) sourceGroups[key] = [];
     sourceGroups[key].push(t);
   }
-  // Sort sources: most recent transaction first
+  // Sort sources: most recent transaction first, Miscellaneous always last
   const sourceNames = Object.keys(sourceGroups).sort((a, b) => {
-    if (a === 'Unknown') return 1;
-    if (b === 'Unknown') return -1;
+    if (a === 'Miscellaneous') return 1;
+    if (b === 'Miscellaneous') return -1;
     const latestA = sourceGroups[a][0]?.date || '';
     const latestB = sourceGroups[b][0]?.date || '';
     return latestB.localeCompare(latestA);
   });
 
-  // Auto-select most recent source on first load
+  // Auto-select all sources when transactions change
   useEffect(() => {
-    if (sourceNames.length > 0 && selectedSources.size === 0) {
-      setSelectedSources(new Set([sourceNames[0]]));
+    if (sourceNames.length > 0) {
+      setSelectedSources(new Set(sourceNames));
     }
   }, [transactions]);
 
@@ -238,21 +277,6 @@ export default function Transactions() {
               return <option key={y} value={y}>{y}</option>;
             })}
           </select>
-          <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border)' }}>
-            {['all', 'debit', 'credit'].map(type => (
-              <button
-                key={type}
-                onClick={() => setTypeFilter(type)}
-                className="px-2.5 py-1.5 text-xs font-medium transition-all"
-                style={{
-                  background: typeFilter === type ? 'var(--accent)' : 'var(--card)',
-                  color: typeFilter === type ? '#fff' : 'var(--text-muted)',
-                }}
-              >
-                {type === 'all' ? 'All' : type === 'debit' ? 'Debit' : 'Credit'}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
@@ -260,16 +284,11 @@ export default function Transactions() {
 
       {/* Overall Stats Bar */}
       <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-        <StatPill label="Transactions" value={transactions.length} />
-        <StatPill label="Debit" value={formatCurrency(totalDebit)} variant="debit" />
-        <StatPill label="Credit" value={formatCurrency(totalCredit)} variant="credit" />
-        <StatPill label="Net" value={formatCurrency(netAmount)} variant={netAmount > 0 ? 'debit' : 'credit'} />
-        {reimbursableCount > 0 && (
-          <StatPill label="Not Mine" value={reimbursableCount} muted />
-        )}
-        <span className="text-[10px] sm:text-xs italic ml-auto" style={{ color: 'var(--text-muted)' }}>
-          * Excludes gift card &amp; payment transactions
-        </span>
+        <StatPill label="Total Debit" value={formatCurrency(totalDebit)} subtitle="Excl. gift card, payment & not mine" variant="debit" active={statFilter === 'debit'} onClick={() => setStatFilter(statFilter === 'debit' ? 'all' : 'debit')} />
+        <StatPill label="Total Credit" value={formatCurrency(totalCredit)} subtitle="Refunds only, excl. payments" variant="credit" active={statFilter === 'credit'} onClick={() => setStatFilter(statFilter === 'credit' ? 'all' : 'credit')} />
+        <StatPill label="Others Share" value={formatCurrency(othersShare)} subtitle="Bulk splits added" variant="credit" active={statFilter === 'others'} onClick={() => setStatFilter(statFilter === 'others' ? 'all' : 'others')} />
+        <StatPill label="Net Spend" value={formatCurrency(netAmount)} subtitle="Debit - Credit - Others" variant={netAmount > 0 ? 'debit' : 'credit'} active={statFilter === 'net'} onClick={() => setStatFilter(statFilter === 'net' ? 'all' : 'net')} />
+        <StatPill label="Not Mine" value={`${reimbursableCount} · ${formatCurrency(reimbursableTotal)}`} subtitle="Marked as reimbursable" muted active={statFilter === 'notmine'} onClick={() => setStatFilter(statFilter === 'notmine' ? 'all' : 'notmine')} />
       </div>
 
       {/* Statement Sync Schedule */}
@@ -362,7 +381,7 @@ export default function Transactions() {
       ) : (
         <div className="space-y-5">
           {sourceNames.filter(name => selectedSources.has(name)).map(sourceName => {
-            const group = sourceGroups[sourceName].filter(t => typeFilter === 'all' || t.type === typeFilter);
+            const group = sourceGroups[sourceName];
             const groupDebit = group.filter(t => t.type !== 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
             const groupCredit = group.filter(t => t.type === 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
             const groupNet = groupDebit - groupCredit;
@@ -405,6 +424,7 @@ export default function Transactions() {
                     ) : (
                       <span className="text-sm font-semibold flex items-center gap-1.5 group/name" style={{ color: 'var(--text-primary)' }}>
                         {sourceName}
+                        {sourceName !== 'Miscellaneous' && (
                         <button
                           onClick={e => { e.stopPropagation(); startRename(sourceName); }}
                           className="opacity-40 hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-[var(--surface)]"
@@ -415,17 +435,6 @@ export default function Transactions() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
                           </svg>
                         </button>
-                        {dueDates[sourceName] && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-md ml-1"
-                            style={{
-                              color: new Date(dueDates[sourceName]) < new Date() ? 'var(--danger)' : 'var(--warning, #d97706)',
-                              background: new Date(dueDates[sourceName]) < new Date() ? 'var(--danger-soft, rgba(239,68,68,0.08))' : 'var(--warning-soft, rgba(217,119,6,0.08))',
-                              border: '1px solid currentColor',
-                              opacity: 0.9,
-                            }}
-                          >
-                            Due: {new Date(dueDates[sourceName] + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                          </span>
                         )}
                       </span>
                     )}
@@ -462,6 +471,18 @@ export default function Transactions() {
                         <span className="hidden sm:inline">Add</span>
                       </button>
                       <button
+                        onClick={() => setBulkSplit({ source: sourceName })}
+                        className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-all hover:opacity-80"
+                        style={{ color: 'var(--amber, #d97706)', background: 'var(--amber-soft, rgba(217,119,6,0.08))', border: '1px solid var(--border)' }}
+                        title={`Add bulk split for others' share in ${sourceName}`}
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m7.848 8.25 1.536.887M7.848 8.25a3 3 0 1 1-5.196-3 3 3 0 0 1 5.196 3Zm1.536.887a2.165 2.165 0 0 1 1.083 1.839c.005.351.054.695.14 1.024M9.384 9.137l2.077 1.199M7.848 15.75l1.536-.887m-1.536.887a3 3 0 1 1-5.196 3 3 3 0 0 1 5.196-3Zm1.536-.887a2.165 2.165 0 0 0 1.083-1.838c.005-.352.054-.695.14-1.025m-1.223 2.863 2.077-1.199m0-3.328a4.323 4.323 0 0 1 2.068-1.379l5.325-1.628a4.5 4.5 0 0 1 2.48-.044l.803.215m-7.676 2.836a4.323 4.323 0 0 1 2.068 1.379l5.325 1.628a4.5 4.5 0 0 1 2.48.044l.803.215" />
+                        </svg>
+                        <span className="hidden sm:inline">Split</span>
+                      </button>
+                      {sourceName !== 'Miscellaneous' && (<>
+                      <button
                         onClick={() => confirmDownload(sourceName)}
                         className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-all hover:opacity-80"
                         style={{ color: 'var(--accent)', background: 'var(--accent-soft)', border: '1px solid var(--border)' }}
@@ -483,6 +504,7 @@ export default function Transactions() {
                         </svg>
                         <span className="hidden sm:inline">Delete</span>
                       </button>
+                      </>)}
                     </div>
                   )}
                 </div>
@@ -540,15 +562,47 @@ export default function Transactions() {
                         )}
                       </div>
 
-                      <span
-                        className={`text-sm font-semibold text-right pr-3 tabular-nums ${isStrikethrough ? 'line-through' : ''}`}
-                        style={{
-                          fontFamily: 'var(--font-mono)',
-                          color: isStrikethrough ? 'var(--text-muted)' : t.type === 'credit' ? 'var(--success)' : 'var(--danger)',
-                        }}
-                      >
-                        {t.type === 'credit' ? '+' : '-'}{formatCurrency(t.amount)}
-                      </span>
+                      <div className="flex flex-col items-end">
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={`text-sm font-semibold tabular-nums ${isStrikethrough ? 'line-through' : ''}`}
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              color: isStrikethrough ? 'var(--text-muted)' : t.type === 'credit' ? 'var(--success)' : 'var(--danger)',
+                            }}
+                          >
+                            {t.type === 'credit' ? '+' : '-'}{formatCurrency(t.amount)}
+                          </span>
+                          <span className="w-4 inline-flex justify-center">
+                          {!isStrikethrough && t.type !== 'credit' && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setSplitPopover(splitPopover === t.id ? null : t.id); }}
+                              onDoubleClick={e => e.stopPropagation()}
+                              className="p-0.5 rounded opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+                              style={{ color: t.my_share != null ? 'var(--accent)' : 'var(--text-muted)' }}
+                              title="Split this expense"
+                            >
+                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m7.848 8.25 1.536.887M7.848 8.25a3 3 0 1 1-5.196-3 3 3 0 0 1 5.196 3Zm1.536.887a2.165 2.165 0 0 1 1.083 1.839c.005.351.054.695.14 1.024M9.384 9.137l2.077 1.199M7.848 15.75l1.536-.887m-1.536.887a3 3 0 1 1-5.196 3 3 3 0 0 1 5.196-3Zm1.536-.887a2.165 2.165 0 0 0 1.083-1.838c.005-.352.054-.695.14-1.025m-1.223 2.863 2.077-1.199m0-3.328a4.323 4.323 0 0 1 2.068-1.379l5.325-1.628a4.5 4.5 0 0 1 2.48-.044l.803.215m-7.676 2.836a4.323 4.323 0 0 1 2.068 1.379l5.325 1.628a4.5 4.5 0 0 1 2.48.044l.803.215" />
+                              </svg>
+                            </button>
+                          )}
+                          </span>
+                        </div>
+                        {t.my_share != null && t.my_share < t.amount && splitPopover !== t.id && (
+                          <span className="text-[10px] tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
+                            Mine: {formatCurrency(t.my_share)}
+                          </span>
+                        )}
+                        {splitPopover === t.id && (
+                          <SplitInline
+                            amount={t.amount}
+                            currentShare={t.my_share}
+                            onSave={val => updateSplit(t.id, val)}
+                            onClose={() => setSplitPopover(null)}
+                          />
+                        )}
+                      </div>
 
                       <select
                         value={t.category_id || ''}
@@ -638,6 +692,13 @@ export default function Transactions() {
             );
           })}
         </div>
+      )}
+      {bulkSplit && (
+        <BulkSplitModal
+          source={bulkSplit.source}
+          onSave={amount => addBulkSplit(bulkSplit.source, amount)}
+          onClose={() => setBulkSplit(null)}
+        />
       )}
       {editingTransaction && (
         <EditTransactionModal
@@ -1058,7 +1119,7 @@ function AddTransactionModal({ source, categories, onClose, onAdded }) {
   );
 }
 
-function StatPill({ label, value, variant, muted }) {
+function StatPill({ label, value, subtitle, variant, muted, active, onClick }) {
   const getStyle = () => {
     if (variant === 'debit') return { background: 'var(--stat-debit-bg)', border: '1px solid var(--stat-debit-border)', color: 'var(--stat-debit-text)' };
     if (variant === 'credit') return { background: 'var(--stat-credit-bg)', border: '1px solid var(--stat-credit-border)', color: 'var(--stat-credit-text)' };
@@ -1066,13 +1127,133 @@ function StatPill({ label, value, variant, muted }) {
     return { background: 'var(--pill-default-bg)', border: '1px solid var(--pill-default-border)', color: 'var(--pill-default-text)' };
   };
 
+  const style = getStyle();
+  if (active) {
+    style.boxShadow = '0 0 0 2px var(--accent)';
+    style.transform = 'scale(1.03)';
+  }
+
   return (
-    <div
-      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-      style={getStyle()}
+    <button
+      onClick={onClick}
+      className="flex flex-col items-start px-4 py-2 rounded-lg text-sm font-medium transition-all cursor-pointer"
+      style={style}
     >
-      <span className="opacity-70">{label}</span>
-      <span className="font-bold text-base">{value}</span>
+      <div className="flex items-center gap-2">
+        <span className="opacity-70">{label}</span>
+        <span className="font-bold text-base">{value}</span>
+      </div>
+      {subtitle && <span className="text-[10px] opacity-60 mt-0.5">{subtitle}</span>}
+    </button>
+  );
+}
+
+function BulkSplitModal({ source, onSave, onClose }) {
+  const [amount, setAmount] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function handleKey(e) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!amount || isNaN(parseFloat(amount))) return;
+    setSaving(true);
+    await onSave(amount);
+    setSaving(false);
+  }
+
+  return (
+    <Modal open={true} onClose={onClose}>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Bulk Split</h2>
+        <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
+        Add a flat "others share" amount for <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>{source}</span>. This will be subtracted from your net spend.
+      </p>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: 'var(--text-muted)' }}>Others share amount</label>
+          <input
+            type="text"
+            inputMode="decimal"
+            value={amount}
+            onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+            placeholder="e.g. 2500"
+            className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+            style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}
+            autoFocus
+          />
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium rounded-lg" style={{ color: 'var(--text-secondary)' }}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving || !amount}
+            className="px-4 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
+            style={{ background: 'var(--accent)' }}
+          >
+            {saving ? 'Adding...' : 'Add Split'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function SplitInline({ amount, currentShare, onSave, onClose }) {
+  const [value, setValue] = useState(currentShare != null ? String(currentShare) : '');
+
+  function handleKeyDown(e) {
+    if (e.key === 'Escape') onClose();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const num = parseFloat(value);
+      if (!value || isNaN(num)) onSave(null);
+      else onSave(Math.min(num, amount));
+    }
+  }
+
+  return (
+    <div className="mt-1.5" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
+      <div className="flex items-center gap-1 justify-end">
+        <input
+          type="text"
+          inputMode="decimal"
+          value={value}
+          onChange={e => setValue(e.target.value.replace(/[^0-9.]/g, ''))}
+          onKeyDown={handleKeyDown}
+          onBlur={() => {
+            const num = parseFloat(value);
+            if (!value || isNaN(num)) onSave(null);
+            else onSave(Math.min(num, amount));
+          }}
+          placeholder="My share"
+          className="w-24 rounded-md px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-teal-500/30"
+          style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}
+          autoFocus
+        />
+        {currentShare != null && (
+          <button
+            onClick={() => onSave(null)}
+            className="text-[10px] px-1 rounded"
+            style={{ color: 'var(--danger)' }}
+            title="Clear split"
+          >
+            ✕
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -431,28 +431,24 @@ router.get('/sync-jobs', cacheMiddleware('sync-jobs', 30000), async (req, res) =
 
 router.get('/sync-schedule', cacheMiddleware('sync-schedule', 300000), async (req, res) => {
   const now = new Date();
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowIST = new Date(now.getTime() + IST_OFFSET_MS);
 
-  // Statement sync: daily at 6:00 AM IST (00:30 UTC)
-  const statementIST = new Date(nowIST);
-  statementIST.setHours(6, 0, 0, 0);
-  if (nowIST >= statementIST) {
-    statementIST.setDate(statementIST.getDate() + 1);
+  // Statement sync: daily at 00:30 UTC = 6:00 AM IST
+  const nextStatementUTC = new Date(now);
+  nextStatementUTC.setUTCHours(0, 30, 0, 0);
+  if (now >= nextStatementUTC) {
+    nextStatementUTC.setUTCDate(nextStatementUTC.getUTCDate() + 1);
   }
-  const nextStatementUTC = new Date(statementIST.getTime() - IST_OFFSET_MS);
 
-  // Amazon Pay sync: every 6 hours at IST 6am, 12pm, 6pm, 12am
-  const istHour = nowIST.getHours();
-  const istSlots = [0, 6, 12, 18];
-  let nextISTHour = istSlots.find(h => h > istHour);
-  const nextAmazonIST = new Date(nowIST);
-  if (nextISTHour === undefined) {
-    nextAmazonIST.setDate(nextAmazonIST.getDate() + 1);
-    nextISTHour = 0;
+  // Amazon Pay sync: every 6h at 00:30, 06:30, 12:30, 18:30 UTC = 6am, 12pm, 6pm, 12am IST
+  const utcSlots = [0.5, 6.5, 12.5, 18.5];
+  const currentHourFrac = now.getUTCHours() + now.getUTCMinutes() / 60;
+  let nextSlot = utcSlots.find(h => h > currentHourFrac);
+  const nextAmazonUTC = new Date(now);
+  if (nextSlot === undefined) {
+    nextAmazonUTC.setUTCDate(nextAmazonUTC.getUTCDate() + 1);
+    nextSlot = 0.5;
   }
-  nextAmazonIST.setHours(nextISTHour, 0, 0, 0);
-  const nextAmazonUTC = new Date(nextAmazonIST.getTime() - IST_OFFSET_MS);
+  nextAmazonUTC.setUTCHours(Math.floor(nextSlot), (nextSlot % 1) * 60, 0, 0);
 
   const { count: amazonCount } = await supabase
     .from('email_accounts')
