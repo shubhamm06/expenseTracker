@@ -46,8 +46,10 @@ router.get('/summary', cacheMiddleware(req => `dashboard:summary:${req.query.mon
 
   if (error) return res.status(500).json({ error: error.message });
 
-  const voucherRefunds = (topups || []).filter(t => t.source !== 'manual').reduce((s, t) => s + t.amount, 0);
-  const voucherOthersShare = (voucherUsage || []).filter(u => u.my_share != null).reduce((s, u) => s + (u.amount - u.my_share), 0);
+  const voucherRefunds = (topups || []).filter(t => t.source !== 'manual' && t.source !== 'split').reduce((s, t) => s + t.amount, 0);
+  const voucherBulkSplits = (topups || []).filter(t => t.source === 'split').reduce((s, t) => s + t.amount, 0);
+  const voucherPerTxnSplits = (voucherUsage || []).filter(u => u.my_share != null).reduce((s, u) => s + (u.amount - u.my_share), 0);
+  const voucherOthersShare = voucherBulkSplits + voucherPerTxnSplits;
   const cardOthersShare = (cardSplits || []).reduce((s, t) => s + (t.amount - t.my_share), 0);
 
   res.json({ ...data, voucher_refunds: voucherRefunds, voucher_others_share: voucherOthersShare, card_others_share: cardOthersShare });

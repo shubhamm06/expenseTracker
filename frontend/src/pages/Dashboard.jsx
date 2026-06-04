@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Area, AreaChart } from 'recharts';
 
 export default function Dashboard() {
   const [summary, setSummary] = useState(null);
@@ -40,7 +40,8 @@ export default function Dashboard() {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="relative">
-          <div className="w-10 h-10 border-3 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }} />
+          <div className="w-12 h-12 border-3 border-t-transparent rounded-full animate-spin" style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }} />
+          <div className="absolute inset-0 w-12 h-12 rounded-full animate-pulse" style={{ background: 'var(--accent)', opacity: 0.1 }} />
         </div>
       </div>
     );
@@ -54,22 +55,24 @@ export default function Dashboard() {
 
   const container = {
     hidden: { opacity: 0 },
-    show: { opacity: 1, transition: { staggerChildren: 0.04 } },
+    show: { opacity: 1, transition: { staggerChildren: 0.06 } },
   };
   const item = {
-    hidden: { opacity: 0, y: 12 },
-    show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 300, damping: 24 } },
+    hidden: { opacity: 0, y: 16 },
+    show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 260, damping: 22 } },
   };
 
   return (
-    <motion.div className="space-y-5" variants={container} initial="hidden" animate="show">
-      {/* Header Row */}
-      <motion.div variants={item} className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 sm:gap-3">
+    <motion.div className="space-y-6 pb-6" variants={container} initial="hidden" animate="show">
+      {/* Header */}
+      <motion.div variants={item} className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-            {getGreeting()}
+          <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            {getGreeting()} 👋
           </h1>
-          <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>{monthLabel}</p>
+          <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
+            Here's your spending summary for <span className="font-semibold" style={{ color: 'var(--text-secondary)' }}>{monthLabel}</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <select value={month} onChange={e => setMonth(Number(e.target.value))} className="select-field w-auto text-xs">
@@ -86,65 +89,103 @@ export default function Dashboard() {
         </div>
       </motion.div>
 
-      {/* Sync Schedule */}
+      {/* Sync Schedule Chip */}
       {syncSchedule && (syncSchedule.statement_sync.enabled || syncSchedule.amazon_pay_sync.enabled) && (
-        <motion.div variants={item} className="flex items-center gap-3 flex-wrap px-3 py-2 rounded-lg text-[11px]" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
-          <svg className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--accent)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
+        <motion.div variants={item} className="flex items-center gap-3 flex-wrap px-4 py-2.5 rounded-xl text-[11px]" style={{ background: 'var(--card)', border: '1px solid var(--border)', backdropFilter: 'blur(8px)' }}>
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--success)' }} />
+            <span className="font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Next Sync</span>
+          </div>
           {syncSchedule.statement_sync.enabled && (
-            <span style={{ color: 'var(--text-secondary)' }}>
-              <span className="font-semibold" style={{ color: 'var(--purple)' }}>Statements</span>{' '}
-              {new Date(syncSchedule.statement_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
+            <span className="px-2 py-0.5 rounded-md" style={{ background: 'var(--purple-soft, rgba(139,92,246,0.1))', color: 'var(--purple, #8b5cf6)' }}>
+              Statements · {new Date(syncSchedule.statement_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
             </span>
           )}
           {syncSchedule.amazon_pay_sync.enabled && (
-            <span style={{ color: 'var(--text-secondary)' }}>
-              <span className="font-semibold" style={{ color: 'var(--amber)' }}>Amazon Pay</span>{' '}
-              {new Date(syncSchedule.amazon_pay_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
+            <span className="px-2 py-0.5 rounded-md" style={{ background: 'rgba(245,158,11,0.1)', color: '#d97706' }}>
+              Amazon Pay · {new Date(syncSchedule.amazon_pay_sync.next_at).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' })}
             </span>
           )}
         </motion.div>
       )}
 
-      {/* KPI Banner */}
-      <motion.div variants={item} className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KPICard label="Total Debit" value={totalDebit} subtitle={`Cards: ${formatCurrency(summary.direct_spend || 0)} + Amazon Pay: ${formatCurrency(summary.voucher_spend || 0)}`} color="var(--danger)" />
-        <KPICard label="Total Credit" value={totalCredit} subtitle={`Cards: ${formatCurrency(summary.total_credit || 0)} + AP Refunds: ${formatCurrency(summary.voucher_refunds || 0)}`} color="var(--success)" />
-        <KPICard label="Net Spend" value={netSpend} color={netSpend > 0 ? 'var(--danger)' : 'var(--success)'} />
-        {othersShare > 0 && (
-          <KPICard label="Others Share" value={othersShare} subtitle={`Cards: ${formatCurrency(summary.card_others_share || 0)} + AP: ${formatCurrency(summary.voucher_others_share || 0)}`} color="var(--amber)" />
-        )}
+      {/* KPI Cards */}
+      <motion.div variants={item} className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <KPICard
+          label="Total Debit"
+          value={totalDebit}
+          subtitle={`Cards: ${formatCurrency(summary.direct_spend || 0)} · AP: ${formatCurrency(summary.voucher_spend || 0)}`}
+          color="#ef4444"
+          gradient="linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(239,68,68,0.03) 100%)"
+          borderColor="rgba(239,68,68,0.2)"
+          icon="↗"
+        />
+        <KPICard
+          label="Total Credit"
+          value={totalCredit}
+          subtitle={`Cards: ${formatCurrency(summary.total_credit || 0)} · AP: ${formatCurrency(summary.voucher_refunds || 0)}`}
+          color="#22c55e"
+          gradient="linear-gradient(135deg, rgba(34,197,94,0.12) 0%, rgba(34,197,94,0.03) 100%)"
+          borderColor="rgba(34,197,94,0.2)"
+          icon="↙"
+        />
+        <KPICard
+          label="Others Share"
+          value={othersShare}
+          subtitle={`Cards: ${formatCurrency(summary.card_others_share || 0)} · AP: ${formatCurrency(summary.voucher_others_share || 0)}`}
+          color="#d97706"
+          gradient="linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(245,158,11,0.03) 100%)"
+          borderColor="rgba(245,158,11,0.2)"
+          icon="⇄"
+        />
+        <KPICard
+          label="Net Spend"
+          value={netSpend}
+          subtitle="Debit − Credit − Others"
+          color={netSpend > 0 ? '#ef4444' : '#22c55e'}
+          gradient={netSpend > 0
+            ? "linear-gradient(135deg, rgba(239,68,68,0.12) 0%, rgba(239,68,68,0.03) 100%)"
+            : "linear-gradient(135deg, rgba(34,197,94,0.12) 0%, rgba(34,197,94,0.03) 100%)"}
+          borderColor={netSpend > 0 ? 'rgba(239,68,68,0.2)' : 'rgba(34,197,94,0.2)'}
+          icon="≡"
+          highlight
+        />
       </motion.div>
 
-      <motion.p variants={item} className="text-xs italic -mt-2" style={{ color: 'var(--text-muted)' }}>
-        * Excludes gift card &amp; payment transactions
-      </motion.p>
-
-      {/* Row: Source Breakdown + Net Spend Ring */}
-      <motion.div variants={item} className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Per-Source / Per-Card Breakdown */}
-        <div className="card p-4 lg:col-span-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Spend by Account</h3>
+      {/* Source Breakdown + Net Spend Ring */}
+      <motion.div variants={item}>
+        <div className="card p-5 rounded-2xl" style={{ border: '1px solid var(--border)' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Spend by Account</h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+              {sourceBreakdown.length} sources
+            </span>
+          </div>
           {sourceBreakdown.length === 0 ? (
-            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No data</p>
+            <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>No data for this month</p>
           ) : (
-            <div className="space-y-2.5">
+            <div className="space-y-3">
               {[...sourceBreakdown].sort((a, b) => (b.debit - b.credit) - (a.debit - a.credit)).map((src, i) => {
                 const maxNet = Math.max(...sourceBreakdown.map(s => s.debit - s.credit));
                 const net = src.debit - src.credit;
                 const pct = maxNet > 0 ? (net / maxNet) * 100 : 0;
                 return (
-                  <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{src.source || 'Unknown'}</span>
-                      <span className="text-xs font-semibold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
-                        {formatCurrency(src.debit - src.credit)}
+                  <motion.div key={i} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.06, type: 'spring', stiffness: 200 }}>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                          {(src.source || 'U')[0].toUpperCase()}
+                        </div>
+                        <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{src.source || 'Unknown'}</span>
+                      </div>
+                      <span className="text-xs font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+                        {formatCurrency(net)}
                       </span>
                     </div>
-                    <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--progress-bg)' }}>
+                    <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'var(--progress-bg)' }}>
                       <motion.div className="h-full rounded-full" initial={{ width: 0 }} animate={{ width: `${pct}%` }}
-                        transition={{ duration: 0.6, delay: i * 0.05 }} style={{ background: 'var(--danger)' }} />
+                        transition={{ duration: 0.8, delay: i * 0.06, ease: [0.4, 0, 0.2, 1] }}
+                        style={{ background: `linear-gradient(90deg, var(--danger) 0%, rgba(239,68,68,0.6) 100%)` }} />
                     </div>
                   </motion.div>
                 );
@@ -153,25 +194,22 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Net Spend Ring */}
-        <NetSpendCard netSpend={netSpend} totalSpend={totalDebit || 1} />
       </motion.div>
 
-      {/* Row: Category Donut + Top Merchants */}
+      {/* Category Donut + Top Merchants */}
       <motion.div variants={item} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Category Donut */}
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Categories</h3>
+        <div className="card p-5 rounded-2xl" style={{ border: '1px solid var(--border)' }}>
+          <h3 className="text-xs font-bold uppercase tracking-wider mb-4" style={{ color: 'var(--text-muted)' }}>Categories</h3>
           {summary.category_breakdown.length === 0 ? (
-            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No data</p>
+            <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>No data</p>
           ) : (
-            <div className="flex items-center gap-4">
-              <div className="w-[140px] h-[140px] shrink-0">
+            <div className="flex items-center gap-5">
+              <div className="w-[150px] h-[150px] shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={summary.category_breakdown} dataKey="total" nameKey="name"
-                      cx="50%" cy="50%" innerRadius={40} outerRadius={65} paddingAngle={2}
-                      animationBegin={0} animationDuration={600}>
+                      cx="50%" cy="50%" innerRadius={42} outerRadius={68} paddingAngle={2}
+                      animationBegin={0} animationDuration={800} animationEasing="ease-out">
                       {summary.category_breakdown.map((cat, i) => (
                         <Cell key={i} fill={cat.color || '#a8a29e'} stroke="none" />
                       ))}
@@ -180,44 +218,53 @@ export default function Dashboard() {
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex-1 space-y-1.5">
+              <div className="flex-1 space-y-2 max-h-[150px] overflow-y-auto">
                 {summary.category_breakdown.map((cat, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cat.color || '#a8a29e' }} />
+                  <motion.div key={i} className="flex items-center justify-between text-xs"
+                    initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cat.color || '#a8a29e', boxShadow: `0 0 6px ${cat.color || '#a8a29e'}50` }} />
                       <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{cat.name || 'Uncategorized'}</span>
                     </div>
-                    <span className="font-semibold tabular-nums shrink-0 ml-2" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+                    <span className="font-bold tabular-nums shrink-0 ml-2" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                       {formatCurrency(cat.total)}
                     </span>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
             </div>
           )}
         </div>
 
-        {/* Top Merchants */}
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Top Spends</h3>
+        <div className="card p-5 rounded-2xl" style={{ border: '1px solid var(--border)' }}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Top Spends</h3>
+            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(239,68,68,0.08)', color: 'var(--danger)' }}>
+              {topMerchants.length} merchants
+            </span>
+          </div>
           {topMerchants.length === 0 ? (
-            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>No data</p>
+            <p className="text-sm py-6 text-center" style={{ color: 'var(--text-muted)' }}>No data</p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {topMerchants.slice(0, 6).map((m, i) => {
                 const maxTotal = topMerchants[0]?.total || 1;
                 const pct = (m.total / maxTotal) * 100;
                 return (
-                  <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.04 }}>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-xs truncate pr-2" style={{ color: 'var(--text-secondary)', maxWidth: '70%' }}>{m.description}</span>
-                      <span className="text-xs font-semibold tabular-nums shrink-0" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+                  <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05, type: 'spring', stiffness: 200 }}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold w-4 text-center" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
+                        <span className="text-xs truncate" style={{ color: 'var(--text-secondary)', maxWidth: '60%' }}>{m.description}</span>
+                      </div>
+                      <span className="text-xs font-bold tabular-nums shrink-0" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                         {formatCurrency(m.total)}
                       </span>
                     </div>
-                    <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'var(--progress-bg)' }}>
+                    <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--progress-bg)' }}>
                       <motion.div className="h-full rounded-full" initial={{ width: 0 }} animate={{ width: `${pct}%` }}
-                        transition={{ duration: 0.5, delay: i * 0.04 }} style={{ background: 'var(--accent)' }} />
+                        transition={{ duration: 0.6, delay: i * 0.05, ease: [0.4, 0, 0.2, 1] }}
+                        style={{ background: `linear-gradient(90deg, var(--accent) 0%, rgba(99,102,241,0.5) 100%)` }} />
                     </div>
                   </motion.div>
                 );
@@ -229,16 +276,16 @@ export default function Dashboard() {
 
       {/* Month-over-Month Chart */}
       {comparison.length > 0 && (
-        <motion.div variants={item} className="card p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>Month-over-Month</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={comparison} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+        <motion.div variants={item} className="card p-5 rounded-2xl" style={{ border: '1px solid var(--border)' }}>
+          <h3 className="text-xs font-bold uppercase tracking-wider mb-4" style={{ color: 'var(--text-muted)' }}>Month-over-Month</h3>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={comparison} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fontSize: 10, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--table-row-hover)' }} />
-              <Legend wrapperStyle={{ fontSize: '0.65rem', color: 'var(--text-muted)' }} iconType="circle" iconSize={6} />
-              <Bar dataKey="total" name="Debit" fill="var(--danger)" radius={[4, 4, 0, 0]} maxBarSize={32} />
-              <Bar dataKey="credit" name="Credit" fill="var(--success)" radius={[4, 4, 0, 0]} maxBarSize={32} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--table-row-hover)', radius: 8 }} />
+              <Legend wrapperStyle={{ fontSize: '0.65rem', color: 'var(--text-muted)', paddingTop: '12px' }} iconType="circle" iconSize={7} />
+              <Bar dataKey="total" name="Debit" fill="var(--danger)" radius={[6, 6, 0, 0]} maxBarSize={36} />
+              <Bar dataKey="credit" name="Credit" fill="var(--success)" radius={[6, 6, 0, 0]} maxBarSize={36} />
             </BarChart>
           </ResponsiveContainer>
         </motion.div>
@@ -254,49 +301,31 @@ function getGreeting() {
   return 'Good evening';
 }
 
-function KPICard({ label, value, color, subtitle }) {
+function KPICard({ label, value, color, gradient, borderColor, subtitle, icon, highlight }) {
   return (
-    <motion.div className="card p-3" whileHover={{ scale: 1.02 }} transition={{ type: 'spring', stiffness: 400, damping: 25 }}>
-      <p className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
-      <p className="text-lg font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color }}>
+    <motion.div
+      className="relative overflow-hidden rounded-xl p-4"
+      style={{ background: gradient, border: `1px solid ${borderColor}` }}
+      whileHover={{ scale: 1.03, y: -2 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+    >
+      {highlight && (
+        <div className="absolute top-0 right-0 w-16 h-16 opacity-10" style={{ background: `radial-gradient(circle at top right, ${color}, transparent)` }} />
+      )}
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</p>
+        <span className="text-sm opacity-60">{icon}</span>
+      </div>
+      <p className="text-xl font-extrabold tabular-nums leading-none" style={{ fontFamily: 'var(--font-mono)', color }}>
         <AnimatedNumber value={value} />
       </p>
-      {subtitle && <p className="text-[9px] mt-1 leading-tight" style={{ color: 'var(--text-muted)' }}>{subtitle}</p>}
+      {subtitle && <p className="text-[11px] mt-2 leading-tight font-medium" style={{ color: 'var(--text-secondary)' }}>{subtitle}</p>}
     </motion.div>
   );
 }
 
-function NetSpendCard({ netSpend, totalSpend }) {
-  const ratio = Math.min(Math.abs(netSpend) / totalSpend, 1);
-  const circumference = 2 * Math.PI * 40;
-  const strokeDashoffset = circumference * (1 - ratio);
-  const color = netSpend > 0 ? 'var(--danger)' : 'var(--success)';
 
-  return (
-    <div className="card p-4 flex flex-col items-center justify-center">
-      <div className="relative w-24 h-24">
-        <svg width="96" height="96" viewBox="0 0 96 96">
-          <circle cx="48" cy="48" r="40" fill="none" stroke="var(--progress-bg)" strokeWidth="7" />
-          <motion.circle cx="48" cy="48" r="40" fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"
-            strokeDasharray={circumference} initial={{ strokeDashoffset: circumference }}
-            animate={{ strokeDashoffset }} transition={{ duration: 1, ease: [0.4, 0, 0.2, 1] }}
-            transform="rotate(-90 48 48)" style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-sm font-bold tabular-nums" style={{ color }}>{Math.round(ratio * 100)}%</span>
-        </div>
-      </div>
-      <p className="text-[10px] font-semibold uppercase tracking-wider mt-2" style={{ color: 'var(--text-muted)' }}>
-        {netSpend > 0 ? 'Outflow' : 'Inflow'}
-      </p>
-      <p className="text-base font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color }}>
-        <AnimatedNumber value={Math.abs(netSpend)} />
-      </p>
-    </div>
-  );
-}
-
-function AnimatedNumber({ value, duration = 700 }) {
+function AnimatedNumber({ value, duration = 800 }) {
   const [display, setDisplay] = useState(0);
   const ref = useRef(null);
   const startTime = useRef(null);
@@ -324,12 +353,12 @@ function DonutTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const data = payload[0];
   return (
-    <div style={{ background: 'var(--tooltip-bg)', border: '1px solid var(--border)', borderRadius: '8px', padding: '0.4rem 0.6rem', fontSize: '0.7rem', boxShadow: '0 4px 16px rgba(0,0,0,0.2)' }}>
-      <div className="flex items-center gap-1.5">
-        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: data.payload.color || '#a8a29e' }} />
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{data.name || 'Uncategorized'}</span>
+    <div style={{ background: 'var(--tooltip-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '0.5rem 0.75rem', fontSize: '0.7rem', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', backdropFilter: 'blur(8px)' }}>
+      <div className="flex items-center gap-2">
+        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: data.payload.color || '#a8a29e', boxShadow: `0 0 6px ${data.payload.color || '#a8a29e'}` }} />
+        <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{data.name || 'Uncategorized'}</span>
       </div>
-      <p style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', marginTop: '2px' }}>{formatCurrency(data.value)}</p>
+      <p className="mt-1" style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{formatCurrency(data.value)}</p>
     </div>
   );
 }
@@ -339,10 +368,12 @@ function ChartTooltip({ active, payload, label }) {
   const data = payload[0]?.payload;
   if (!data) return null;
   return (
-    <div style={{ background: 'var(--tooltip-bg)', border: '1px solid var(--border)', borderRadius: '10px', padding: '0.5rem 0.7rem', fontSize: '0.7rem', boxShadow: '0 4px 16px rgba(0,0,0,0.2)' }}>
-      <p style={{ color: 'var(--text-secondary)', marginBottom: '2px', fontWeight: 600 }}>{label}</p>
-      <p style={{ color: 'var(--danger)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>Debit: {formatCurrency(data.total)}</p>
-      <p style={{ color: 'var(--success)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>Credit: {formatCurrency(data.credit)}</p>
+    <div style={{ background: 'var(--tooltip-bg)', border: '1px solid var(--border)', borderRadius: '12px', padding: '0.6rem 0.8rem', fontSize: '0.7rem', boxShadow: '0 8px 32px rgba(0,0,0,0.25)', backdropFilter: 'blur(8px)' }}>
+      <p className="font-bold mb-1" style={{ color: 'var(--text-primary)' }}>{label}</p>
+      <div className="space-y-0.5">
+        <p style={{ color: '#ef4444', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>↗ Debit: {formatCurrency(data.total)}</p>
+        <p style={{ color: '#22c55e', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>↙ Credit: {formatCurrency(data.credit)}</p>
+      </div>
     </div>
   );
 }

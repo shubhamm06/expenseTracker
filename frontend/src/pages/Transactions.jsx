@@ -15,9 +15,10 @@ export default function Transactions() {
   const [addingSource, setAddingSource] = useState(null);
   const [syncSchedule, setSyncSchedule] = useState(null);
   const [statFilter, setStatFilter] = useState('all');
-  const [filters, setFilters] = useState({
-    month: new Date().getMonth() + 1,
-    year: new Date().getFullYear(),
+  const [filters, setFilters] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return { month: d.getMonth() + 1, year: d.getFullYear() };
   });
 
   useEffect(() => {
@@ -123,7 +124,9 @@ export default function Transactions() {
   const isBulkSplit = t => t.description === 'Bulk Split - Others share';
   const totalDebit = transactions.filter(t => t.type !== 'credit' && !isExcluded(t)).reduce((s, t) => s + t.amount, 0);
   const totalCredit = transactions.filter(t => t.type === 'credit' && !isExcluded(t) && !isBulkSplit(t)).reduce((s, t) => s + t.amount, 0);
-  const othersShare = transactions.filter(t => t.type === 'credit' && !isExcluded(t) && isBulkSplit(t)).reduce((s, t) => s + t.amount, 0);
+  const bulkSplitShare = transactions.filter(t => t.type === 'credit' && !isExcluded(t) && isBulkSplit(t)).reduce((s, t) => s + t.amount, 0);
+  const perTxnSplitShare = transactions.filter(t => t.type !== 'credit' && !isExcluded(t) && t.my_share != null).reduce((s, t) => s + (t.amount - t.my_share), 0);
+  const othersShare = bulkSplitShare + perTxnSplitShare;
   const netAmount = totalDebit - totalCredit - othersShare;
   const reimbursableCount = transactions.filter(t => t.is_reimbursable).length;
   const reimbursableTotal = transactions.filter(t => t.is_reimbursable).reduce((s, t) => s + t.amount, 0);
@@ -134,7 +137,7 @@ export default function Transactions() {
   const filteredTransactions = statFilter === 'all' ? transactions : transactions.filter(t => {
     if (statFilter === 'debit') return t.type !== 'credit' && !isExcluded(t);
     if (statFilter === 'credit') return t.type === 'credit' && !isExcluded(t) && !isBulkSplit(t);
-    if (statFilter === 'others') return t.type === 'credit' && !isExcluded(t) && isBulkSplit(t);
+    if (statFilter === 'others') return (t.type === 'credit' && !isExcluded(t) && isBulkSplit(t)) || (t.type !== 'credit' && !isExcluded(t) && t.my_share != null);
     if (statFilter === 'net') return !isExcluded(t);
     if (statFilter === 'notmine') return t.is_reimbursable;
     return true;
@@ -286,7 +289,7 @@ export default function Transactions() {
       <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
         <StatPill label="Total Debit" value={formatCurrency(totalDebit)} subtitle="Excl. gift card, payment & not mine" variant="debit" active={statFilter === 'debit'} onClick={() => setStatFilter(statFilter === 'debit' ? 'all' : 'debit')} />
         <StatPill label="Total Credit" value={formatCurrency(totalCredit)} subtitle="Refunds only, excl. payments" variant="credit" active={statFilter === 'credit'} onClick={() => setStatFilter(statFilter === 'credit' ? 'all' : 'credit')} />
-        <StatPill label="Others Share" value={formatCurrency(othersShare)} subtitle="Bulk splits added" variant="credit" active={statFilter === 'others'} onClick={() => setStatFilter(statFilter === 'others' ? 'all' : 'others')} />
+        <StatPill label="Others Share" value={formatCurrency(othersShare)} subtitle="Bulk + per-txn splits" variant="warning" active={statFilter === 'others'} onClick={() => setStatFilter(statFilter === 'others' ? 'all' : 'others')} />
         <StatPill label="Net Spend" value={formatCurrency(netAmount)} subtitle="Debit - Credit - Others" variant={netAmount > 0 ? 'debit' : 'credit'} active={statFilter === 'net'} onClick={() => setStatFilter(statFilter === 'net' ? 'all' : 'net')} />
         <StatPill label="Not Mine" value={`${reimbursableCount} · ${formatCurrency(reimbursableTotal)}`} subtitle="Marked as reimbursable" muted active={statFilter === 'notmine'} onClick={() => setStatFilter(statFilter === 'notmine' ? 'all' : 'notmine')} />
       </div>
@@ -1123,6 +1126,7 @@ function StatPill({ label, value, subtitle, variant, muted, active, onClick }) {
   const getStyle = () => {
     if (variant === 'debit') return { background: 'var(--stat-debit-bg)', border: '1px solid var(--stat-debit-border)', color: 'var(--stat-debit-text)' };
     if (variant === 'credit') return { background: 'var(--stat-credit-bg)', border: '1px solid var(--stat-credit-border)', color: 'var(--stat-credit-text)' };
+    if (variant === 'warning') return { background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', color: '#d97706' };
     if (muted) return { background: 'var(--stat-muted-bg)', border: '1px solid var(--stat-muted-border)', color: 'var(--stat-muted-text)' };
     return { background: 'var(--pill-default-bg)', border: '1px solid var(--pill-default-border)', color: 'var(--pill-default-text)' };
   };

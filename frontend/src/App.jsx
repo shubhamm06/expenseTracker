@@ -131,10 +131,10 @@ function AppShell() {
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
-              initial={{ opacity: 0, y: 12 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+              transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
             >
               <Routes location={location}>
                 <Route path="/" element={<Dashboard />} />
@@ -226,7 +226,12 @@ function Sidebar({ open }) {
 
       <div className="sidebar-footer">
         <div className="sidebar-user">
-          <span className="user-email">{user?.email}</span>
+          <div className="user-avatar">
+            {(user?.email || '?')[0].toUpperCase()}
+          </div>
+          <div className="user-info">
+            <span className="user-email">{user?.email}</span>
+          </div>
           <button onClick={signOut} className="signout-btn" title="Sign out">
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9" />
@@ -237,7 +242,7 @@ function Sidebar({ open }) {
           <div className={`toggle-track ${dark ? 'dark' : ''}`}>
             <motion.div
               className="toggle-thumb"
-              animate={{ x: dark ? 20 : 0 }}
+              animate={{ x: dark ? 18 : 0 }}
               transition={{ type: 'spring', stiffness: 500, damping: 30 }}
             >
               {dark ? <MoonIcon size={10} /> : <SunIcon size={10} />}

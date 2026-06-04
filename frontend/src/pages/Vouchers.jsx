@@ -22,6 +22,8 @@ export default function Vouchers() {
   const [showShareToast, setShowShareToast] = useState(false);
   const [voucherTypeFilter, setVoucherTypeFilter] = useState('all');
   const [splitPopover, setSplitPopover] = useState(null);
+  const [showBulkSplit, setShowBulkSplit] = useState(false);
+  const [newSplit, setNewSplit] = useState({ amount: '', date: new Date().toLocaleDateString('en-CA'), description: 'Bulk Split - Others share' });
   const [balanceSummary, setBalanceSummary] = useState(null);
   const [filters, setFilters] = useState({
     month: new Date().getMonth() + 1,
@@ -448,12 +450,12 @@ export default function Vouchers() {
                 ))}
               </div>
               <button
-                onClick={() => { setShowAddUsage(!showAddUsage); setShowTopup(false); }}
+                onClick={() => { setShowAddUsage(!showAddUsage); setShowTopup(false); setShowBulkSplit(false); }}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 style={{
-                  background: showAddUsage ? 'var(--accent-soft)' : 'var(--surface)',
-                  color: showAddUsage ? 'var(--accent)' : 'var(--text-secondary)',
-                  border: '1px solid var(--border)',
+                  background: showAddUsage ? 'var(--danger)' : 'rgba(239,68,68,0.08)',
+                  color: showAddUsage ? '#fff' : 'var(--danger)',
+                  border: `1px solid ${showAddUsage ? 'var(--danger)' : 'rgba(239,68,68,0.3)'}`,
                 }}
                 title="Record a spend from this voucher"
               >
@@ -463,12 +465,12 @@ export default function Vouchers() {
                 Add Spend
               </button>
               <button
-                onClick={() => { setShowTopup(!showTopup); setShowAddUsage(false); }}
+                onClick={() => { setShowTopup(!showTopup); setShowAddUsage(false); setShowBulkSplit(false); }}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
                 style={{
-                  background: showTopup ? 'var(--success-soft)' : 'var(--surface)',
-                  color: showTopup ? 'var(--success)' : 'var(--text-secondary)',
-                  border: '1px solid var(--border)',
+                  background: showTopup ? 'var(--success)' : 'rgba(34,197,94,0.08)',
+                  color: showTopup ? '#fff' : 'var(--success)',
+                  border: `1px solid ${showTopup ? 'var(--success)' : 'rgba(34,197,94,0.3)'}`,
                 }}
                 title="Add balance to this voucher"
               >
@@ -478,31 +480,13 @@ export default function Vouchers() {
                 Add Balance
               </button>
               <button
-                onClick={() => setConfirmModal({
-                  title: 'Add Others\' Share',
-                  message: '',
-                  isInput: true,
-                  inputPlaceholder: 'Amount others owe',
-                  confirmLabel: 'Add Split',
-                  onConfirm: async (val) => {
-                    if (!val || isNaN(parseFloat(val))) return;
-                    await fetch(`/api/vouchers/${selectedVoucher.id}/topup`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        amount: parseFloat(val),
-                        date: `${filters.year}-${String(filters.month).padStart(2, '0')}-01`,
-                        description: 'Bulk Split - Others share',
-                        source: 'split',
-                      }),
-                    });
-                    setConfirmModal(null);
-                    loadActivity(selectedVoucher.id);
-                    loadVouchers();
-                  },
-                })}
+                onClick={() => { setShowBulkSplit(!showBulkSplit); setShowTopup(false); setShowAddUsage(false); }}
                 className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                style={{ background: 'var(--surface)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+                style={{
+                  background: showBulkSplit ? '#d97706' : 'rgba(245,158,11,0.08)',
+                  color: showBulkSplit ? '#fff' : '#d97706',
+                  border: `1px solid ${showBulkSplit ? '#d97706' : 'rgba(245,158,11,0.3)'}`,
+                }}
                 title="Add others' share as credit"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -605,10 +589,57 @@ export default function Vouchers() {
             </form>
           )}
 
+          {/* Bulk Split Form */}
+          {showBulkSplit && (
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newSplit.amount) return;
+              await fetch(`/api/vouchers/${selectedVoucher.id}/topup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  amount: parseFloat(newSplit.amount),
+                  date: newSplit.date,
+                  description: newSplit.description || 'Bulk Split - Others share',
+                  source: 'split',
+                }),
+              });
+              setNewSplit({ amount: '', date: new Date().toLocaleDateString('en-CA'), description: 'Bulk Split - Others share' });
+              setShowBulkSplit(false);
+              loadActivity(selectedVoucher.id);
+              loadVouchers();
+            }} className="px-5 py-4 border-b flex flex-wrap gap-3 items-end" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+              <div className="w-28">
+                <label className="block text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Amount</label>
+                <input type="number" required value={newSplit.amount} onChange={e => setNewSplit(s => ({ ...s, amount: e.target.value }))}
+                  className="input-field" placeholder="500" autoFocus />
+              </div>
+              <div className="w-36">
+                <label className="block text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Date</label>
+                <input type="date" required value={newSplit.date} onChange={e => setNewSplit(s => ({ ...s, date: e.target.value }))}
+                  className="input-field" />
+              </div>
+              <div className="flex-1 min-w-[120px]">
+                <label className="block text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Description</label>
+                <input type="text" value={newSplit.description} onChange={e => setNewSplit(s => ({ ...s, description: e.target.value }))}
+                  placeholder="Others share" className="input-field" />
+              </div>
+              <button type="submit" className="px-3 py-2 rounded-lg text-sm font-medium transition-colors" style={{ background: '#d97706', color: 'white' }} title="Add others' share as credit">
+                <svg className="w-3.5 h-3.5 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Add
+              </button>
+            </form>
+          )}
+
           {/* Monthly Summary */}
           {(() => {
             const monthSpend = usage.reduce((s, u) => s + u.amount, 0);
             const monthTopup = topups.reduce((s, t) => s + t.amount, 0);
+            const notMineFromSplit = usage.reduce((s, u) => s + (u.my_share != null ? (u.amount - u.my_share) : 0), 0);
+            const notMineFromBulk = topups.filter(t => t.source === 'split').reduce((s, t) => s + t.amount, 0);
+            const notMine = notMineFromSplit + notMineFromBulk;
             const carryForward = balanceSummary?.carry_forward ?? 0;
             const endBalance = carryForward + monthTopup - monthSpend;
             return (
@@ -632,6 +663,13 @@ export default function Vouchers() {
                   <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-muted)' }}>Balance:</span>
                   <span className="text-sm font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{formatCurrency(endBalance)}</span>
                 </div>
+                {notMine > 0 && (<>
+                  <span style={{ color: 'var(--border)' }}>|</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] uppercase tracking-wider font-medium" style={{ color: 'var(--text-muted)' }}>Others Share:</span>
+                    <span className="text-sm font-bold tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: 'var(--warning, #f59e0b)' }}>{formatCurrency(notMine)}</span>
+                  </div>
+                </>)}
               </div>
             );
           })()}
@@ -703,7 +741,7 @@ export default function Vouchers() {
                             <button
                               onClick={e => { e.stopPropagation(); setSplitPopover(splitPopover === entry.id ? null : entry.id); }}
                               className="p-0.5 rounded opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
-                              style={{ color: 'var(--accent)' }}
+                              style={{ color: entry.my_share != null ? '#f59e0b' : 'var(--text-muted)' }}
                               title="Split this expense"
                             >
                               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -713,12 +751,18 @@ export default function Vouchers() {
                           )}
                         </span>
                       </div>
+                      {entry._type === 'usage' && entry.my_share != null && entry.my_share < entry.amount && splitPopover !== entry.id && (
+                        <span className="text-[10px] tabular-nums" style={{ fontFamily: 'var(--font-mono)', color: '#f59e0b' }}>
+                          Mine: {formatCurrency(entry.my_share)}
+                        </span>
+                      )}
                       {splitPopover === entry.id && (
                         <div className="mt-1.5" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center gap-1 justify-end">
                             <input
                               type="text"
                               inputMode="decimal"
+                              defaultValue={entry.my_share != null ? String(entry.my_share) : ''}
                               placeholder="My share"
                               className="w-24 rounded-md px-2 py-1 text-xs text-center focus:outline-none focus:ring-2 focus:ring-teal-500/30"
                               style={{ background: 'var(--input-bg)', border: '1px solid var(--border)', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}
@@ -727,18 +771,28 @@ export default function Vouchers() {
                                 if (e.key === 'Escape') setSplitPopover(null);
                                 if (e.key === 'Enter') {
                                   e.preventDefault();
-                                  const myShare = parseFloat(e.target.value);
-                                  const othersShare = entry.amount - myShare;
-                                  if (myShare >= 0 && othersShare > 0) {
-                                    fetch(`/api/vouchers/${selectedVoucher.id}/topup`, {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ amount: othersShare, date: entry.date, description: `Split - ${entry.description || 'Others share'}`, source: 'split' }),
-                                    }).then(() => { setSplitPopover(null); loadActivity(selectedVoucher.id); loadVouchers(); });
-                                  }
+                                  const val = e.target.value;
+                                  const myShare = val ? Math.min(parseFloat(val), entry.amount) : null;
+                                  fetch(`/api/vouchers/usage/${entry.id}/split`, {
+                                    method: 'PATCH',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ my_share: myShare }),
+                                  });
+                                  setUsage(prev => prev.map(u => u.id === entry.id ? { ...u, my_share: myShare } : u));
+                                  setSplitPopover(null);
                                 }
                               }}
-                              onBlur={() => setSplitPopover(null)}
+                              onBlur={e => {
+                                const val = e.target.value;
+                                const myShare = val ? Math.min(parseFloat(val), entry.amount) : null;
+                                fetch(`/api/vouchers/usage/${entry.id}/split`, {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ my_share: myShare }),
+                                });
+                                setUsage(prev => prev.map(u => u.id === entry.id ? { ...u, my_share: myShare } : u));
+                                setSplitPopover(null);
+                              }}
                             />
                           </div>
                         </div>
